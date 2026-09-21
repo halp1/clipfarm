@@ -1,0 +1,11 @@
+.build/
+build/
+dist/
+*.xcuserdatad
+.DS_Store
+
+# Nothing here should ever hold the CDN key, but keep env files out anyway.
+.env
+.env.*
+*.pem
+secrets/
