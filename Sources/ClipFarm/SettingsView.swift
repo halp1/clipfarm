@@ -24,6 +24,22 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("Quality") {
+                    Picker("Frame rate", selection: $model.frameRate) {
+                        ForEach(Preferences.frameRateChoices, id: \.self) { rate in
+                            Text("\(rate) fps").tag(rate)
+                        }
+                    }
+                    Picker("Resolution", selection: $model.resolutionScale) {
+                        ForEach(Preferences.resolutionScaleChoices, id: \.self) { scale in
+                            Text(Preferences.resolutionLabel(scale)).tag(scale)
+                        }
+                    }
+                    Text(model.qualityHint)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("Audio") {
                     Picker("Record", selection: $model.audioSource) {
                         ForEach(AudioSource.allCases, id: \.self) { source in
@@ -240,6 +256,13 @@ final class SettingsModel: ObservableObject {
         }
     }
 
+    @Published var frameRate: Int = 30 {
+        didSet { apply { preferences.frameRate = frameRate } }
+    }
+    @Published var resolutionScale: Double = 1.0 {
+        didSet { apply { preferences.resolutionScale = resolutionScale } }
+    }
+
     @Published var audioSource: AudioSource = .output {
         didSet {
             apply {
@@ -313,6 +336,8 @@ final class SettingsModel: ObservableObject {
         cdnEnabled = preferences.isSelected(.cdn)
         showMenuBarItem = preferences.showMenuBarItem
         launchAtLogin = LoginItem.isEnabled
+        frameRate = preferences.frameRate
+        resolutionScale = preferences.resolutionScale
         audioSource = preferences.audioSource
         inputDeviceUID = preferences.inputDeviceUID ?? ""
         outputDeviceUID = preferences.outputDeviceUID ?? ""
@@ -366,6 +391,16 @@ final class SettingsModel: ObservableObject {
         if !outputDeviceUID.isEmpty && !outputDevices.contains(where: { $0.id == outputDeviceUID }) {
             outputDeviceUID = ""
         }
+    }
+
+    /// Says what the current quality settings will actually record, since the numbers
+    /// on their own do not say much.
+    var qualityHint: String {
+        let size = CaptureEngine.shared.plannedCaptureSize(scale: resolutionScale)
+        let width = Int(size.width)
+        let height = Int(size.height)
+        guard width > 0 else { return "Lower settings use less battery." }
+        return "Records \(width) by \(height) at \(frameRate) fps. Lower uses less battery."
     }
 
     /// Shows where a clip will actually end up, so the folder is not a guess.

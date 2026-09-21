@@ -48,6 +48,22 @@ A slider and a number box, from 1 second to 5 minutes. Both show the same value.
 Memory use tracks the length, since ClipFarm holds compressed frames rather than raw
 ones. A minute of a 3024x1964 display runs around 45 MB.
 
+### Quality
+
+Frame rate and resolution are settings, defaulting to 30 fps at one pixel per point.
+The line under them says what that works out to on your display.
+
+These are the settings that decide how much battery ClipFarm costs, since it encodes
+continuously the whole time it is open. Recording a 3024 by 1964 Retina panel at 60 fps
+pushes four times the pixels per second that 1512 by 982 at 30 does, and on this
+machine that was the difference between about 6 per cent CPU and about 3.
+
+Retina is there if you want it for a clip you plan to crop into. Half is mostly useful
+on a large external display, where a quarter of the pixels is still a reasonable size.
+
+Memory follows the same numbers, since the buffer holds encoded frames. A 30 second
+buffer at the default runs around 70 MB.
+
 ### Where clips go
 
 Pick any combination.

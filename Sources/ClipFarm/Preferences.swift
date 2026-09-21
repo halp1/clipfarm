@@ -108,6 +108,8 @@ final class Preferences {
         static let inputDeviceUID = "inputDeviceUID"
         static let outputDeviceUID = "outputDeviceUID"
         static let cdnFolder = "cdnFolder"
+        static let frameRate = "frameRate"
+        static let resolutionScale = "resolutionScale"
     }
 
     /// Posted whenever anything below changes, so the UI and the capture engine can react.
@@ -123,7 +125,9 @@ final class Preferences {
             Key.showMenuBarItem: true,
             Key.destinations: [Destination.clipboard.rawValue],
             Key.audioSource: AudioSource.output.rawValue,
-            Key.cdnFolder: CDNUploader.defaultFolder
+            Key.cdnFolder: CDNUploader.defaultFolder,
+            Key.frameRate: 30,
+            Key.resolutionScale: 1.0
         ])
     }
 
@@ -253,6 +257,38 @@ final class Preferences {
         set {
             defaults.set(CDNUploader.sanitizeFolder(newValue), forKey: Key.cdnFolder)
             announce()
+        }
+    }
+
+    /// Frames per second to record. The cost of capture scales with this.
+    var frameRate: Int {
+        get {
+            let stored = defaults.integer(forKey: Key.frameRate)
+            return Preferences.frameRateChoices.contains(stored) ? stored : 30
+        }
+        set { defaults.set(newValue, forKey: Key.frameRate); announce() }
+    }
+
+    static let frameRateChoices = [24, 30, 60]
+
+    /// How much of the display's pixel size to keep, where 1 is one captured pixel per
+    /// point. A Retina display reports half its pixel size in points, so 1 gives a
+    /// 1512 by 982 clip on a 3024 by 1964 panel.
+    var resolutionScale: Double {
+        get {
+            let stored = defaults.double(forKey: Key.resolutionScale)
+            return Preferences.resolutionScaleChoices.contains(stored) ? stored : 1.0
+        }
+        set { defaults.set(newValue, forKey: Key.resolutionScale); announce() }
+    }
+
+    static let resolutionScaleChoices: [Double] = [0.5, 1.0, 2.0]
+
+    static func resolutionLabel(_ scale: Double) -> String {
+        switch scale {
+        case 0.5: return "Half"
+        case 2.0: return "Retina"
+        default: return "Standard"
         }
     }
 

@@ -62,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
+        installMainMenu()
         updateMenuBarPresence()
 
         Task {
@@ -85,6 +86,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         openSettings()
         return true
+    }
+
+    /// Gives the app a menu so the usual shortcuts work.
+    ///
+    /// An accessory app shows no menu bar of its own, but the menu still has to exist
+    /// for key equivalents to be found. Without it ⌘W and ⌘Q do nothing in the
+    /// settings window.
+    private func installMainMenu() {
+        let main = NSMenu()
+
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(
+            withTitle: "Settings…",
+            action: #selector(openSettings),
+            keyEquivalent: ","
+        ).target = self
+        appMenu.addItem(.separator())
+        appMenu.addItem(
+            withTitle: "Close Window",
+            action: #selector(NSWindow.performClose(_:)),
+            keyEquivalent: "w"
+        )
+        appMenu.addItem(
+            withTitle: "Quit ClipFarm",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+
+        // Standard editing shortcuts, so the key and folder fields behave normally.
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(
+            withTitle: "Select All",
+            action: #selector(NSText.selectAll(_:)),
+            keyEquivalent: "a"
+        )
+        editItem.submenu = editMenu
+        main.addItem(editItem)
+
+        NSApp.mainMenu = main
     }
 
     @objc private func preferencesChanged() {

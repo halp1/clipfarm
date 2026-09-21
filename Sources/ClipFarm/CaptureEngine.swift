@@ -38,7 +38,7 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
     let inputRecorder = InputAudioRecorder()
 
     private(set) var isRunning = false
-    private var frameRate: Int32 = 60
+    private var frameRate: Int32 = 30
     private var captureSize = CGSize(width: 1920, height: 1080)
 
     /// Posted when the capture stops on its own, usually because the display changed
@@ -65,6 +65,13 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
         // screen capture, since the microphone runs on its own session.
         guard isRunning else { return }
         let preferences = Preferences.shared
+
+        // Frame rate and size are fixed when the stream starts, so changing either
+        // means building a new one.
+        if Int32(preferences.frameRate) != frameRate || preferences.resolutionScale != activeScale {
+            Task { await restart() }
+            return
+        }
 
         let wantedOutput = preferences.outputDeviceUID
         if preferences.audioSource.needsOutputDevice {
@@ -96,7 +103,16 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
     /// whether it actually needs to switch.
     private var activeInputDeviceUID: String?
     private var activeOutputDeviceUID: String?
+    private var activeScale: Double = 1.0
 
+
+    /// What a given scale would capture on the main display, for the settings text.
+    func plannedCaptureSize(scale: Double) -> CGSize {
+        guard let display = CGMainDisplayID() as CGDirectDisplayID? else { return .zero }
+        let width = Double(CGDisplayPixelsWide(display)) * scale
+        let height = Double(CGDisplayPixelsHigh(display)) * scale
+        return CGSize(width: width, height: height)
+    }
 
     /// Asks for screen recording permission, which macOS shows as a prompt the first time.
     func requestPermission() async -> Bool {
@@ -127,8 +143,13 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
             // The whole display, every time. ClipFarm never records a single window.
             let filter = SCContentFilter(display: display, excludingWindows: [])
             let config = SCStreamConfiguration()
-            config.width = display.width * 2
-            config.height = display.height * 2
+            // Recording every Retina pixel at 60 fps costs far more battery than a
+            // clip needs. Both are settings now, defaulting to one pixel per point at
+            // 30 fps, which cuts the pixels pushed per second by about four.
+            frameRate = Int32(Preferences.shared.frameRate)
+            let scale = Preferences.shared.resolutionScale
+            config.width = Int(Double(display.width) * scale)
+            config.height = Int(Double(display.height) * scale)
             config.minimumFrameInterval = CMTime(value: 1, timescale: frameRate)
             config.queueDepth = 8
             config.pixelFormat = kCVPixelFormatType_32BGRA
@@ -140,6 +161,7 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
             config.channelCount = 2
 
             captureSize = CGSize(width: config.width, height: config.height)
+            activeScale = scale
             try setUpEncoder(width: Int32(config.width), height: Int32(config.height))
 
             let stream = SCStream(filter: filter, configuration: config, delegate: self)
@@ -269,8 +291,11 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
             key: kVTCompressionPropertyKey_AllowFrameReordering,
             value: kCFBooleanFalse
         )
+        // Scale the bitrate with both the frame size and the frame rate, so dropping
+        // either actually reduces the work and the file size.
         let pixels = Double(width) * Double(height)
-        let bitrate = Int(min(max(pixels * 0.12, 6_000_000), 40_000_000))
+        let rateFactor = Double(frameRate) / 30
+        let bitrate = Int(min(max(pixels * 0.07 * rateFactor, 3_000_000), 24_000_000))
         VTSessionSetProperty(
             session,
             key: kVTCompressionPropertyKey_AverageBitRate,
