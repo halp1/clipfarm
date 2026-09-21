@@ -61,19 +61,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: Notification.Name("dev.haelp.clipfarm.saveClip"),
             object: nil
         )
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(toggleRecording),
+            name: Notification.Name("dev.haelp.clipfarm.toggleRecording"),
+            object: nil
+        )
 
         installMainMenu()
         updateMenuBarPresence()
 
-        Task {
-            let granted = await CaptureEngine.shared.requestPermission()
-            if granted {
-                await CaptureEngine.shared.start()
-            } else {
-                self.explainMissingPermission()
-                self.watchForPermission()
-            }
-        }
+        // Recording starts off, so nothing is captured until you ask for it. Click the
+        // menu bar icon to begin.
+        Log.info("Ready, waiting for you to start recording")
 
         Log.info("ClipFarm is up, shortcut is \(Preferences.shared.hotkey.displayString)")
     }
@@ -153,52 +153,94 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = NSImage(
-            systemSymbolName: "scissors",
-            accessibilityDescription: "ClipFarm"
-        )
-        item.button?.image?.isTemplate = true
+        if let button = item.button {
+            button.target = self
+            button.action = #selector(statusItemClicked)
+            // Ask for both buttons, so a right click can open the menu while a left
+            // click toggles recording. A menu assigned to the item would take the
+            // click before it ever reaches here.
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
         statusItem = item
         refreshMenuBar()
     }
 
-    @objc private func refreshMenuBar() {
-        guard let statusItem else { return }
+    @objc private func statusItemClicked() {
+        let isRightClick = NSApp.currentEvent?.type == .rightMouseUp
+            || NSApp.currentEvent?.modifierFlags.contains(.control) == true
+        if isRightClick {
+            showStatusMenu()
+        } else {
+            toggleRecording()
+        }
+    }
+
+    /// Starts or stops recording, and asks for permission the first time.
+    @objc func toggleRecording() {
+        if CaptureEngine.shared.isRunning {
+            Task { await CaptureEngine.shared.stop() }
+            return
+        }
+        Task {
+            guard await CaptureEngine.shared.requestPermission() else {
+                self.explainMissingPermission()
+                self.watchForPermission()
+                return
+            }
+            await CaptureEngine.shared.start()
+        }
+    }
+
+    /// Pops the menu open for a right click, then detaches it so the next left click
+    /// still reaches the button.
+    private func showStatusMenu() {
+        guard let statusItem, let button = statusItem.button else { return }
+        let menu = buildMenu()
+        statusItem.menu = menu
+        button.performClick(nil)
+        statusItem.menu = nil
+    }
+
+    /// Builds the right click menu.
+    private func buildMenu() -> NSMenu {
         let menu = NSMenu()
+        let recording = CaptureEngine.shared.isRunning
 
-        let status = ClipCoordinator.shared.status
-        let statusText: String
-        switch status {
+        // Only say something when there is something to say. The idle state is already
+        // shown by the icon, so a line repeating it is noise.
+        switch ClipCoordinator.shared.status {
         case .idle:
-            statusText = CaptureEngine.shared.isRunning
-                ? "Holding the last \(durationLabel)"
-                : "Not recording"
-        case .saving(let stage): statusText = "\(stage)…"
-        case .finished(let message): statusText = message
-        case .failed(let message): statusText = message
-        }
-        let statusEntry = NSMenuItem(title: statusText, action: nil, keyEquivalent: "")
-        statusEntry.isEnabled = false
-        menu.addItem(statusEntry)
-
-        if !CaptureEngine.shared.isRunning {
-            menu.addItem(
-                withTitle: "Start recording",
-                action: #selector(startRecording),
-                keyEquivalent: ""
-            ).target = self
+            break
+        case .saving(let stage):
+            let entry = NSMenuItem(title: "\(stage)…", action: nil, keyEquivalent: "")
+            entry.isEnabled = false
+            menu.addItem(entry)
+            menu.addItem(.separator())
+        case .finished(let message), .failed(let message):
+            let entry = NSMenuItem(title: message, action: nil, keyEquivalent: "")
+            entry.isEnabled = false
+            menu.addItem(entry)
+            menu.addItem(.separator())
         }
 
-        menu.addItem(.separator())
+        let toggle = NSMenuItem(
+            title: recording ? "Stop recording" : "Start recording",
+            action: #selector(toggleRecording),
+            keyEquivalent: ""
+        )
+        toggle.target = self
+        menu.addItem(toggle)
+
         let save = NSMenuItem(
             title: "Save clip  \(Preferences.shared.hotkey.displayString)",
             action: #selector(saveClip),
             keyEquivalent: ""
         )
         save.target = self
-        save.isEnabled = CaptureEngine.shared.isRunning
+        save.isEnabled = recording
         menu.addItem(save)
 
+        menu.addItem(.separator())
         let settings = NSMenuItem(
             title: "Settings…",
             action: #selector(openSettings),
@@ -212,21 +254,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         quit.target = self
         menu.addItem(quit)
 
-        statusItem.menu = menu
+        return menu
+    }
 
-        // A dot on the icon while a clip is being written.
-        if case .saving = status {
-            statusItem.button?.image = NSImage(
-                systemSymbolName: "scissors.circle.fill",
-                accessibilityDescription: "ClipFarm is saving"
-            )
-        } else {
-            statusItem.button?.image = NSImage(
-                systemSymbolName: "scissors",
-                accessibilityDescription: "ClipFarm"
-            )
-        }
-        statusItem.button?.image?.isTemplate = true
+    @objc private func refreshMenuBar() {
+        guard let statusItem, let button = statusItem.button else { return }
+
+        let recording = CaptureEngine.shared.isRunning
+        let saving: Bool
+        if case .saving = ClipCoordinator.shared.status { saving = true } else { saving = false }
+
+        let symbol = saving ? "scissors.circle.fill" : "scissors"
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "ClipFarm")
+
+        // Red while recording, so the state is readable at a glance. A template image
+        // takes the menu bar's own colour, so that has to be off to tint it.
+        image?.isTemplate = !recording
+        button.image = image
+        button.contentTintColor = recording ? .systemRed : nil
+
+        button.toolTip = recording
+            ? "Recording. Click to stop, right click for more."
+            : "Not recording. Click to start."
     }
 
     private var durationLabel: String {
@@ -239,10 +288,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func saveClip() {
         ClipCoordinator.shared.saveClip()
-    }
-
-    @objc private func startRecording() {
-        Task { await CaptureEngine.shared.start() }
     }
 
     @objc func openSettings() {

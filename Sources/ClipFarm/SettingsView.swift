@@ -30,14 +30,11 @@ struct SettingsView: View {
                             Text("\(rate) fps").tag(rate)
                         }
                     }
-                    Picker("Resolution", selection: $model.resolutionScale) {
-                        ForEach(Preferences.resolutionScaleChoices, id: \.self) { scale in
-                            Text(Preferences.resolutionLabel(scale)).tag(scale)
+                    Picker("Resolution", selection: $model.captureHeight) {
+                        ForEach(model.resolutionChoices, id: \.height) { choice in
+                            Text(choice.label).tag(choice.height)
                         }
                     }
-                    Text(model.qualityHint)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
                 }
 
                 Section("Audio") {
@@ -104,8 +101,8 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                             .font(.callout)
                         Spacer()
-                        if !model.isRecording {
-                            Button("Start recording") { model.startRecording() }
+                        Button(model.isRecording ? "Stop" : "Start recording") {
+                            model.toggleRecording()
                         }
                     }
                 }
@@ -131,14 +128,14 @@ struct SettingsView: View {
             HStack {
                 Text("Length")
                 Spacer()
-                TextField(
-                    "",
-                    value: $model.duration,
-                    formatter: SettingsModel.durationFormatter
-                )
-                .frame(width: 60)
-                .multilineTextAlignment(.trailing)
-                .textFieldStyle(.roundedBorder)
+                // Bound to text rather than a formatter, so typing something that is
+                // not a number leaves the stored duration alone instead of writing a
+                // stray value.
+                TextField("", text: $model.durationText)
+                    .frame(width: 60)
+                    .multilineTextAlignment(.trailing)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { model.commitDurationText() }
                 Text("sec")
                     .foregroundStyle(.secondary)
             }
@@ -205,21 +202,33 @@ struct SettingsView: View {
 
 @MainActor
 final class SettingsModel: ObservableObject {
-    static let durationFormatter: NumberFormatter = {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.maximumFractionDigits = 0
-        formatter.minimum = NSNumber(value: Preferences.minimumDuration)
-        formatter.maximum = NSNumber(value: Preferences.maximumDuration)
-        return formatter
-    }()
-
     struct Message { let text: String; let isError: Bool }
 
     private let preferences = Preferences.shared
     private var applying = false
 
-    @Published var duration: Double = 30 { didSet { apply { preferences.clipDuration = duration } } }
+    @Published var duration: Double = 30 {
+        didSet {
+            apply {
+                preferences.clipDuration = duration
+                durationText = String(Int(duration.rounded()))
+            }
+        }
+    }
+
+    /// What the number box shows. Kept separate so a half typed value is not stored.
+    @Published var durationText: String = "30"
+
+    /// Reads the box, ignoring anything that is not a usable number.
+    func commitDurationText() {
+        guard let typed = Double(durationText.trimmingCharacters(in: .whitespaces)) else {
+            durationText = String(Int(duration.rounded()))
+            return
+        }
+        let clamped = min(max(typed, Preferences.minimumDuration), Preferences.maximumDuration)
+        duration = clamped
+        durationText = String(Int(clamped.rounded()))
+    }
     @Published var hotkey: Hotkey = .default {
         didSet {
             apply {
@@ -259,8 +268,8 @@ final class SettingsModel: ObservableObject {
     @Published var frameRate: Int = 30 {
         didSet { apply { preferences.frameRate = frameRate } }
     }
-    @Published var resolutionScale: Double = 1.0 {
-        didSet { apply { preferences.resolutionScale = resolutionScale } }
+    @Published var captureHeight: Int = 1080 {
+        didSet { apply { preferences.captureHeight = captureHeight } }
     }
 
     @Published var audioSource: AudioSource = .output {
@@ -330,6 +339,7 @@ final class SettingsModel: ObservableObject {
     func refresh() {
         applying = true
         duration = preferences.clipDuration
+        durationText = String(Int(preferences.clipDuration.rounded()))
         hotkey = preferences.hotkey
         clipboardEnabled = preferences.isSelected(.clipboard)
         folderEnabled = preferences.isSelected(.folder)
@@ -337,7 +347,7 @@ final class SettingsModel: ObservableObject {
         showMenuBarItem = preferences.showMenuBarItem
         launchAtLogin = LoginItem.isEnabled
         frameRate = preferences.frameRate
-        resolutionScale = preferences.resolutionScale
+        captureHeight = preferences.captureHeight
         audioSource = preferences.audioSource
         inputDeviceUID = preferences.inputDeviceUID ?? ""
         outputDeviceUID = preferences.outputDeviceUID ?? ""
@@ -376,8 +386,14 @@ final class SettingsModel: ObservableObject {
         isRecording ? "Recording the screen" : "Not recording"
     }
 
-    func startRecording() {
-        Task { await CaptureEngine.shared.start() }
+    func toggleRecording() {
+        Task {
+            if CaptureEngine.shared.isRunning {
+                await CaptureEngine.shared.stop()
+            } else if await CaptureEngine.shared.requestPermission() {
+                await CaptureEngine.shared.start()
+            }
+        }
     }
 
     /// Picks up a device that was plugged in after the window opened.
@@ -393,15 +409,43 @@ final class SettingsModel: ObservableObject {
         }
     }
 
-    /// Says what the current quality settings will actually record, since the numbers
-    /// on their own do not say much.
-    var qualityHint: String {
-        let size = CaptureEngine.shared.plannedCaptureSize(scale: resolutionScale)
-        let width = Int(size.width)
-        let height = Int(size.height)
-        guard width > 0 else { return "Lower settings use less battery." }
-        return "Records \(width) by \(height) at \(frameRate) fps. Lower uses less battery."
+    struct ResolutionChoice {
+        let height: Int
+        let label: String
     }
+
+    /// The resolution options, labelled with the size each one actually records.
+    ///
+    /// Anything taller than the display is left out, since upscaling costs work and
+    /// adds nothing. The common names are shown alongside the numbers, because
+    /// "1920 by 1080" and "1080p" are the two ways people look for the same thing.
+    var resolutionChoices: [ResolutionChoice] {
+        let native = CaptureEngine.plannedCaptureSize(targetHeight: 0)
+        let nativeHeight = Int(native.height)
+
+        return Preferences.captureHeightChoices.compactMap { height in
+            if height == 0 {
+                let label = nativeHeight > 0
+                    ? "Native \(Int(native.width)) x \(nativeHeight)"
+                    : "Native"
+                return ResolutionChoice(height: 0, label: label)
+            }
+            guard height < nativeHeight else { return nil }
+            let size = CaptureEngine.plannedCaptureSize(targetHeight: height)
+            // The width follows the display's shape, so it rarely matches the 16:9
+            // figure people associate with a height. Show what is actually recorded,
+            // and name the standard so 1080p is still findable.
+            var label = "\(Int(size.width)) x \(Int(size.height))"
+            if let name = Self.commonNames[height] { label += "  (\(name))" }
+            return ResolutionChoice(height: height, label: label)
+        }
+    }
+
+    private static let commonNames: [Int: String] = [
+        2160: "4K", 1600: "WQXGA", 1440: "2K", 1200: "WUXGA",
+        1080: "1080p", 900: "900p", 720: "720p", 540: "540p",
+        480: "480p", 360: "360p"
+    ]
 
     /// Shows where a clip will actually end up, so the folder is not a guess.
     var cdnFolderHint: String {

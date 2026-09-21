@@ -109,7 +109,7 @@ final class Preferences {
         static let outputDeviceUID = "outputDeviceUID"
         static let cdnFolder = "cdnFolder"
         static let frameRate = "frameRate"
-        static let resolutionScale = "resolutionScale"
+        static let captureHeight = "captureHeight"
     }
 
     /// Posted whenever anything below changes, so the UI and the capture engine can react.
@@ -127,7 +127,7 @@ final class Preferences {
             Key.audioSource: AudioSource.output.rawValue,
             Key.cdnFolder: CDNUploader.defaultFolder,
             Key.frameRate: 30,
-            Key.resolutionScale: 1.0
+            Key.captureHeight: 1080
         ])
     }
 
@@ -271,26 +271,19 @@ final class Preferences {
 
     static let frameRateChoices = [24, 30, 60]
 
-    /// How much of the display's pixel size to keep, where 1 is one captured pixel per
-    /// point. A Retina display reports half its pixel size in points, so 1 gives a
-    /// 1512 by 982 clip on a 3024 by 1964 panel.
-    var resolutionScale: Double {
+    /// The height to record at, in pixels. Zero means the display's own pixel height.
+    ///
+    /// Width follows from the display's shape, so the clip is never stretched.
+    var captureHeight: Int {
         get {
-            let stored = defaults.double(forKey: Key.resolutionScale)
-            return Preferences.resolutionScaleChoices.contains(stored) ? stored : 1.0
+            let stored = defaults.integer(forKey: Key.captureHeight)
+            return Preferences.captureHeightChoices.contains(stored) ? stored : 1080
         }
-        set { defaults.set(newValue, forKey: Key.resolutionScale); announce() }
+        set { defaults.set(newValue, forKey: Key.captureHeight); announce() }
     }
 
-    static let resolutionScaleChoices: [Double] = [0.5, 1.0, 2.0]
-
-    static func resolutionLabel(_ scale: Double) -> String {
-        switch scale {
-        case 0.5: return "Half"
-        case 2.0: return "Retina"
-        default: return "Standard"
-        }
-    }
+    /// Zero is the display's native size. The rest are the usual video heights.
+    static let captureHeightChoices = [0, 2160, 1600, 1440, 1200, 1080, 900, 720, 540, 480, 360]
 
     var hotkey: Hotkey {
         get {

@@ -68,7 +68,7 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
 
         // Frame rate and size are fixed when the stream starts, so changing either
         // means building a new one.
-        if Int32(preferences.frameRate) != frameRate || preferences.resolutionScale != activeScale {
+        if Int32(preferences.frameRate) != frameRate || preferences.captureHeight != activeHeight {
             Task { await restart() }
             return
         }
@@ -103,15 +103,44 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
     /// whether it actually needs to switch.
     private var activeInputDeviceUID: String?
     private var activeOutputDeviceUID: String?
-    private var activeScale: Double = 1.0
+    private var activeHeight: Int = 1080
 
 
-    /// What a given scale would capture on the main display, for the settings text.
-    func plannedCaptureSize(scale: Double) -> CGSize {
-        guard let display = CGMainDisplayID() as CGDirectDisplayID? else { return .zero }
-        let width = Double(CGDisplayPixelsWide(display)) * scale
-        let height = Double(CGDisplayPixelsHigh(display)) * scale
+    /// The size to record, scaled to a target height and kept in the display's shape.
+    ///
+    /// Encoders want even numbers, so both sides are rounded to even. A target taller
+    /// than the display is clamped, since upscaling costs work and adds nothing.
+    static func captureSize(for display: SCDisplay, targetHeight: Int) -> CGSize {
+        let nativeWidth = Double(display.width) * 2
+        let nativeHeight = Double(display.height) * 2
+        guard targetHeight > 0, Double(targetHeight) < nativeHeight else {
+            return CGSize(width: nativeWidth, height: nativeHeight)
+        }
+        let scale = Double(targetHeight) / nativeHeight
+        let width = (nativeWidth * scale / 2).rounded() * 2
+        let height = (nativeHeight * scale / 2).rounded() * 2
         return CGSize(width: width, height: height)
+    }
+
+    /// The same calculation for the settings window, which has no SCDisplay to hand.
+    ///
+    /// CGDisplayPixelsWide reports points rather than pixels on a Retina panel, so the
+    /// display mode is asked for the real numbers. Getting this wrong makes a 3024 by
+    /// 1964 display look like 1512 by 982 and hides every option above 982.
+    static func plannedCaptureSize(targetHeight: Int) -> CGSize {
+        let display = CGMainDisplayID()
+        let mode = CGDisplayCopyDisplayMode(display)
+        let nativeWidth = Double(mode?.pixelWidth ?? CGDisplayPixelsWide(display))
+        let nativeHeight = Double(mode?.pixelHeight ?? CGDisplayPixelsHigh(display))
+        guard nativeHeight > 0 else { return .zero }
+        guard targetHeight > 0, Double(targetHeight) < nativeHeight else {
+            return CGSize(width: nativeWidth, height: nativeHeight)
+        }
+        let scale = Double(targetHeight) / nativeHeight
+        return CGSize(
+            width: (nativeWidth * scale / 2).rounded() * 2,
+            height: (nativeHeight * scale / 2).rounded() * 2
+        )
     }
 
     /// Asks for screen recording permission, which macOS shows as a prompt the first time.
@@ -144,12 +173,14 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
             let filter = SCContentFilter(display: display, excludingWindows: [])
             let config = SCStreamConfiguration()
             // Recording every Retina pixel at 60 fps costs far more battery than a
-            // clip needs. Both are settings now, defaulting to one pixel per point at
-            // 30 fps, which cuts the pixels pushed per second by about four.
+            // clip needs, so both are settings, defaulting to 1080p at 30 fps.
             frameRate = Int32(Preferences.shared.frameRate)
-            let scale = Preferences.shared.resolutionScale
-            config.width = Int(Double(display.width) * scale)
-            config.height = Int(Double(display.height) * scale)
+            let size = Self.captureSize(
+                for: display,
+                targetHeight: Preferences.shared.captureHeight
+            )
+            config.width = Int(size.width)
+            config.height = Int(size.height)
             config.minimumFrameInterval = CMTime(value: 1, timescale: frameRate)
             config.queueDepth = 8
             config.pixelFormat = kCVPixelFormatType_32BGRA
@@ -161,7 +192,7 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
             config.channelCount = 2
 
             captureSize = CGSize(width: config.width, height: config.height)
-            activeScale = scale
+            activeHeight = Preferences.shared.captureHeight
             try setUpEncoder(width: Int32(config.width), height: Int32(config.height))
 
             let stream = SCStream(filter: filter, configuration: config, delegate: self)
