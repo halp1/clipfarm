@@ -12,6 +12,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Accessory apps stay out of the Dock and the app switcher.
         NSApp.setActivationPolicy(.accessory)
 
+        // Two copies would fight over the shortcut and record the screen twice.
+        let mine = ProcessInfo.processInfo.processIdentifier
+        let others = NSRunningApplication.runningApplications(
+            withBundleIdentifier: Bundle.main.bundleIdentifier ?? "dev.haelp.clipfarm"
+        ).filter { $0.processIdentifier != mine }
+        if !others.isEmpty {
+            Log.info("ClipFarm is already running, so this copy is stepping aside")
+            NSApp.terminate(nil)
+            return
+        }
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(preferencesChanged),

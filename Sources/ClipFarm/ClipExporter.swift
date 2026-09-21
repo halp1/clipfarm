@@ -100,9 +100,18 @@ enum ClipExporter {
         }
         writer.startSession(atSourceTime: .zero)
 
-        try await append(samples: videoSamples, offset: startTime, to: videoInput)
-        if let audioInput {
-            try await append(samples: audioSamples, offset: startTime, to: audioInput)
+        // Both tracks have to be fed at the same time. Finishing the video track before
+        // starting the audio one leaves the writer waiting on audio that never comes.
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await append(samples: videoSamples, offset: startTime, to: videoInput)
+            }
+            if let audioInput {
+                group.addTask {
+                    try await append(samples: audioSamples, offset: startTime, to: audioInput)
+                }
+            }
+            try await group.waitForAll()
         }
 
         await writer.finishWriting()
@@ -123,9 +132,15 @@ enum ClipExporter {
         let queue = DispatchQueue(label: "dev.haelp.clipfarm.export")
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             var index = 0
+            // The writer calls this block again whenever it drains, including after the
+            // last sample has gone in, so finishing has to be recorded. Resuming a
+            // continuation twice traps.
+            var finished = false
             input.requestMediaDataWhenReady(on: queue) {
+                guard !finished else { return }
                 while input.isReadyForMoreMediaData {
                     guard index < samples.count else {
+                        finished = true
                         input.markAsFinished()
                         continuation.resume()
                         return
@@ -134,6 +149,7 @@ enum ClipExporter {
                     index += 1
                     guard let shifted = retime(sample, by: offset) else { continue }
                     if !input.append(shifted) {
+                        finished = true
                         input.markAsFinished()
                         continuation.resume(
                             throwing: ExportError.writerFailed("A frame could not be written.")

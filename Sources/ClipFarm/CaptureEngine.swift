@@ -11,6 +11,16 @@ import VideoToolbox
 /// them, and `ClipBuffer` holds the result. Because one encoder session runs for the
 /// life of the capture, the samples splice together without a seam when a clip is cut.
 final class CaptureEngine: NSObject, @unchecked Sendable {
+    enum CaptureError: LocalizedError {
+        case startTimedOut
+
+        var errorDescription: String? {
+            switch self {
+            case .startTimedOut:
+                return "The screen recorder did not respond. Its system service may be stuck. Try again from the menu bar, or log out and back in if it keeps happening."
+            }
+        }
+    }
     static let shared = CaptureEngine()
 
     private var stream: SCStream?
@@ -20,7 +30,7 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
 
     let videoBuffer = ClipBuffer()
     /// What the machine plays, captured by ScreenCaptureKit.
-    let audioBuffer = ClipBuffer()
+    let audioBuffer = ClipBuffer(kind: .audio)
     /// A microphone or interface, captured separately.
     let inputRecorder = InputAudioRecorder()
 
@@ -69,6 +79,7 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
     /// whether it actually needs to switch.
     private var activeInputDeviceUID: String?
 
+
     /// Asks for screen recording permission, which macOS shows as a prompt the first time.
     func requestPermission() async -> Bool {
         // CGRequestScreenCaptureAccess is what puts the system dialog on screen. Once a
@@ -114,7 +125,19 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
             let stream = SCStream(filter: filter, configuration: config, delegate: self)
             try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: videoQueue)
             try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQueue)
-            try await stream.startCapture()
+            // The screen recording daemon can wedge, usually after a crash or a fast
+            // series of restarts, and then startCapture never returns. Giving up after
+            // a while leaves the app usable and says what happened, instead of sitting
+            // there looking like it is recording.
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask { try await stream.startCapture() }
+                group.addTask {
+                    try await Task.sleep(nanoseconds: 15_000_000_000)
+                    throw CaptureError.startTimedOut
+                }
+                try await group.next()
+                group.cancelAll()
+            }
 
             self.stream = stream
             isRunning = true
@@ -131,6 +154,11 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
             preferencesChanged()
             Log.info("Recording \(config.width)x\(config.height) at \(frameRate) fps")
             NotificationCenter.default.post(name: CaptureEngine.stateChanged, object: nil)
+        } catch let error as CaptureError {
+            Log.error(error.localizedDescription)
+            isRunning = false
+            NotificationCenter.default.post(name: CaptureEngine.stateChanged, object: nil)
+            return
         } catch {
             Log.error("Could not start recording: \(error.localizedDescription)")
             isRunning = false
@@ -271,7 +299,10 @@ extension CaptureEngine: SCStreamOutput {
             )
 
         case .audio:
-            audioBuffer.append(sampleBuffer)
+            // Copy before holding on to it, or the stream runs out of buffers and stops
+            // sending audio after about a second.
+            guard let copy = AudioSampleCopy.copy(sampleBuffer) else { return }
+            audioBuffer.append(copy)
 
         default:
             break

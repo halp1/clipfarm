@@ -60,8 +60,11 @@ if [ "${1:-}" = "--install" ]; then
   echo "Installing to /Applications"
   pkill -x "$APP_NAME" 2>/dev/null || true
   sleep 1
-  rm -rf "/Applications/$APP_NAME.app"
-  cp -R "$APP" "/Applications/$APP_NAME.app"
+  # Update the bundle in place rather than replacing the directory. Deleting and
+  # recopying makes macOS treat it as a new app, which drops the screen recording
+  # permission even when the signature is unchanged.
+  mkdir -p "/Applications/$APP_NAME.app"
+  rsync -a --delete "$APP/" "/Applications/$APP_NAME.app/"
   # Clear the quarantine flag so the copy opens without a Gatekeeper prompt.
   xattr -dr com.apple.quarantine "/Applications/$APP_NAME.app" 2>/dev/null || true
   echo "Installed /Applications/$APP_NAME.app"

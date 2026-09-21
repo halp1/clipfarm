@@ -11,7 +11,7 @@ final class InputAudioRecorder: NSObject, @unchecked Sendable {
     private var session: AVCaptureSession?
     private let queue = DispatchQueue(label: "dev.haelp.clipfarm.input-audio")
 
-    let buffer = ClipBuffer()
+    let buffer = ClipBuffer(kind: .audio)
     private(set) var isRunning = false
     private(set) var currentDeviceName: String?
 
@@ -69,6 +69,8 @@ extension InputAudioRecorder: AVCaptureAudioDataOutputSampleBufferDelegate {
         from connection: AVCaptureConnection
     ) {
         guard CMSampleBufferIsValid(sampleBuffer) else { return }
-        buffer.append(sampleBuffer)
+        // Same reason as the system audio path: the capture session needs its buffers back.
+        guard let copy = AudioSampleCopy.copy(sampleBuffer) else { return }
+        buffer.append(copy)
     }
 }

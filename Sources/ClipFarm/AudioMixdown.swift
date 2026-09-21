@@ -56,9 +56,10 @@ enum AudioMixdown {
                 guard offsetSeconds > -1 else { continue }
                 let frameOffset = Int(offsetSeconds * sampleRate)
 
-                guard let inputBuffer = pcmBuffer(from: sample, format: sourceFormat) else { continue }
-                guard let converted = convert(inputBuffer, using: converter, to: format) else { continue }
-                guard let channels = converted.floatChannelData else { continue }
+                guard let inputBuffer = pcmBuffer(from: sample, format: sourceFormat),
+                      let converted = convert(inputBuffer, using: converter, to: format),
+                      let channels = converted.floatChannelData
+                else { continue }
 
                 let frames = Int(converted.frameLength)
                 for channel in 0..<Int(channelCount) {
@@ -131,27 +132,53 @@ enum AudioMixdown {
         return output
     }
 
-    /// Wraps a sample buffer's audio in an AVAudioPCMBuffer so AVAudioConverter can read it.
+    /// Reads a sample buffer's interleaved float audio into an AVAudioPCMBuffer.
+    ///
+    /// Samples reach the ring buffer already interleaved, see `AudioSampleCopy`, so the
+    /// bytes can be taken in one go.
     private static func pcmBuffer(
         from sample: CMSampleBuffer,
         format: AVAudioFormat
     ) -> AVAudioPCMBuffer? {
-        let frames = CMSampleBufferGetNumSamples(sample)
+        let frames = Int(CMSampleBufferGetNumSamples(sample))
         guard frames > 0,
               let buffer = AVAudioPCMBuffer(
                 pcmFormat: format,
                 frameCapacity: AVAudioFrameCount(frames)
-              )
+              ),
+              let block = CMSampleBufferGetDataBuffer(sample)
         else { return nil }
         buffer.frameLength = AVAudioFrameCount(frames)
 
-        let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
-            sample,
-            at: 0,
-            frameCount: Int32(frames),
-            into: buffer.mutableAudioBufferList
-        )
-        guard status == noErr else { return nil }
+        var lengthAtOffset = 0
+        var totalLength = 0
+        var dataPointer: UnsafeMutablePointer<Int8>?
+        guard CMBlockBufferGetDataPointer(
+            block,
+            atOffset: 0,
+            lengthAtOffsetOut: &lengthAtOffset,
+            totalLengthOut: &totalLength,
+            dataPointerOut: &dataPointer
+        ) == noErr, let dataPointer else { return nil }
+
+        let channels = Int(format.channelCount)
+        let source = UnsafeRawPointer(dataPointer).assumingMemoryBound(to: Float.self)
+        let availableFrames = min(frames, totalLength / (4 * channels))
+
+        if format.isInterleaved {
+            guard let destination = buffer.floatChannelData?[0] else { return nil }
+            destination.update(from: source, count: availableFrames * channels)
+        } else {
+            // Split the interleaved source back out, one buffer per channel.
+            guard let channelData = buffer.floatChannelData else { return nil }
+            for channel in 0..<channels {
+                let destination = channelData[channel]
+                for frame in 0..<availableFrames {
+                    destination[frame] = source[frame * channels + channel]
+                }
+            }
+        }
+        buffer.frameLength = AVAudioFrameCount(availableFrames)
         return buffer
     }
 

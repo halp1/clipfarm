@@ -13,14 +13,31 @@ final class ClipBuffer {
 
     /// Kept beyond the clip length so the trim always has a keyframe to start from and
     /// a little room for samples that arrive out of order.
-    private let slack: Double = 3
+    private var slack: Double { kind == .audio ? 8 : 3 }
 
     /// How many seconds to keep. Set from the clip duration preference.
+    ///
+    /// Video keeps a little extra so a trim can reach back to a keyframe. Audio keeps
+    /// more still, since the clip starts at whatever keyframe precedes the requested
+    /// time and the audio has to cover from there.
     var window: Double = 30 {
         didSet { lock.withLock { trimLocked() } }
     }
 
     private(set) var formatDescription: CMFormatDescription?
+
+    /// Audio samples are all independently decodable, so a trim can cut anywhere. Video
+    /// has to keep the keyframe that the following frames depend on.
+    enum Kind {
+        case video
+        case audio
+    }
+
+    let kind: Kind
+
+    init(kind: Kind = .video) {
+        self.kind = kind
+    }
 
     func append(_ sample: CMSampleBuffer) {
         lock.withLock {
@@ -39,14 +56,22 @@ final class ClipBuffer {
         let newestTime = CMSampleBufferGetPresentationTimeStamp(newest)
         let cutoff = CMTimeSubtract(newestTime, CMTime(seconds: window + slack, preferredTimescale: 600))
 
-        var firstKeepable = 0
-        for (index, sample) in samples.enumerated() {
-            let time = CMSampleBufferGetPresentationTimeStamp(sample)
-            if time >= cutoff { break }
-            if ClipBuffer.isKeyframe(sample) { firstKeepable = index }
-        }
-        if firstKeepable > 0 {
-            samples.removeFirst(firstKeepable)
+        switch kind {
+        case .audio:
+            // Any audio sample can be dropped on its own.
+            let firstKeepable = samples.firstIndex {
+                CMSampleBufferGetPresentationTimeStamp($0) >= cutoff
+            } ?? samples.count
+            if firstKeepable > 0 { samples.removeFirst(firstKeepable) }
+
+        case .video:
+            var firstKeepable = 0
+            for (index, sample) in samples.enumerated() {
+                let time = CMSampleBufferGetPresentationTimeStamp(sample)
+                if time >= cutoff { break }
+                if ClipBuffer.isKeyframe(sample) { firstKeepable = index }
+            }
+            if firstKeepable > 0 { samples.removeFirst(firstKeepable) }
         }
     }
 
