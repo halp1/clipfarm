@@ -93,7 +93,7 @@ struct SettingsView: View {
             }
             .padding(12)
         }
-        .frame(width: 460, height: 560)
+        .frame(width: 480, height: 680)
         .onAppear { model.refresh() }
     }
 
@@ -143,8 +143,9 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             HStack {
-                SecureField("HALP/CDN_…", text: $model.keyInput)
+                SecureField("", text: $model.keyInput, prompt: Text("Paste a key"))
                     .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
                 Button(model.isCheckingKey ? "Checking…" : "Save key") { model.saveKey() }
                     .disabled(model.keyInput.isEmpty || model.isCheckingKey)
             }
