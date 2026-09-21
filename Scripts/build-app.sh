@@ -32,10 +32,23 @@ fi
 
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-# An ad-hoc signature is enough for a local build, and screen recording permission
-# sticks to it as long as the bundle keeps the same identifier and location.
-echo "Signing"
-codesign --force --deep --sign - \
+# Screen recording permission is tied to the signature. An ad-hoc signature changes
+# on every build, so macOS treats each build as a different app and asks again. Signing
+# with a stable certificate keeps the grant across rebuilds.
+#
+# SIGN_IDENTITY picks the certificate. Scripts/make-signing-identity.sh creates a local
+# one if you do not have a Developer ID.
+SIGN_IDENTITY="${SIGN_IDENTITY:-ClipFarm Local Signing}"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_IDENTITY"; then
+  echo "Signing as $SIGN_IDENTITY"
+else
+  echo "Signing ad hoc, since no $SIGN_IDENTITY certificate was found"
+  echo "  macOS will ask for screen recording permission again after each build."
+  echo "  Run Scripts/make-signing-identity.sh once to avoid that."
+  SIGN_IDENTITY="-"
+fi
+
+codesign --force --deep --sign "$SIGN_IDENTITY" \
   --entitlements "$ROOT/Resources/ClipFarm.entitlements" \
   --options runtime \
   "$APP" 2>&1 | sed 's/^/  /'

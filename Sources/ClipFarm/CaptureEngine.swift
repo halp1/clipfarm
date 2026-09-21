@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreMedia
 import Foundation
+import CoreGraphics
 import ScreenCaptureKit
 import VideoToolbox
 
@@ -70,14 +71,17 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
 
     /// Asks for screen recording permission, which macOS shows as a prompt the first time.
     func requestPermission() async -> Bool {
-        do {
-            _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-            return true
-        } catch {
-            Log.error("Screen recording permission is not granted: \(error.localizedDescription)")
-            return false
-        }
+        // CGRequestScreenCaptureAccess is what puts the system dialog on screen. Once a
+        // user has answered it macOS remembers, and the only way back is the Screen &
+        // System Audio Recording list in System Settings.
+        if CGPreflightScreenCaptureAccess() { return true }
+        if CGRequestScreenCaptureAccess() { return true }
+        Log.error("Screen recording permission is not granted")
+        return false
     }
+
+    /// Whether macOS currently allows the screen to be recorded.
+    var hasScreenPermission: Bool { CGPreflightScreenCaptureAccess() }
 
     func start() async {
         guard !isRunning else { return }

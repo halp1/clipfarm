@@ -37,6 +37,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ClipCoordinator.shared.saveClip()
         }
 
+        // A second way in, for a stream deck, a shell script, or a test run:
+        //   osascript -e 'do shell script "..."' or any tool that can post this.
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(saveClip),
+            name: Notification.Name("dev.haelp.clipfarm.saveClip"),
+            object: nil
+        )
+
         updateMenuBarPresence()
 
         Task {
@@ -44,7 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if granted {
                 await CaptureEngine.shared.start()
             } else {
-                await MainActor.run { self.explainMissingPermission() }
+                self.explainMissingPermission()
+                self.watchForPermission()
             }
         }
 
@@ -161,7 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return remainder == 0 ? "\(minutes)m" : "\(minutes)m \(remainder)s"
     }
 
-    @objc private func saveClip() {
+    @objc func saveClip() {
         ClipCoordinator.shared.saveClip()
     }
 
@@ -185,6 +195,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    /// Waits for the permission to be switched on in System Settings and starts
+    /// recording as soon as it is, so there is no need to relaunch by hand.
+    private func watchForPermission() {
+        Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard let self else { return }
+                if CaptureEngine.shared.hasScreenPermission {
+                    await CaptureEngine.shared.start()
+                    self.refreshMenuBar()
+                    return
+                }
+            }
+        }
     }
 
     private func explainMissingPermission() {
