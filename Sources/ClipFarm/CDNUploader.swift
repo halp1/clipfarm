@@ -8,8 +8,28 @@ import Foundation
 enum CDNUploader {
     static let baseURL = URL(string: "https://cdn.haelp.dev")!
 
-    /// Where clips land on the CDN. The API wants this without a leading slash.
-    static let remoteFolder = "clips"
+    /// Where clips land unless you pick somewhere else in settings.
+    static let defaultFolder = "clips"
+
+    /// The folder clips are uploaded into, from preferences.
+    static var remoteFolder: String { Preferences.shared.cdnFolder }
+
+    /// Trims a folder into the form the API accepts.
+    ///
+    /// Slashes, spaces and dot segments are cleaned up, since they produce keys that
+    /// the public link cannot resolve. An empty result falls back to the default
+    /// folder: the CDN stores a top level upload under a key that starts with a slash,
+    /// and its public route cannot address those, so clips there would upload fine and
+    /// then 404. A folder is always used.
+    static func sanitizeFolder(_ folder: String) -> String {
+        let cleaned = folder
+            .replacingOccurrences(of: "\\", with: "/")
+            .split(separator: "/")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && $0 != "." && $0 != ".." }
+            .joined(separator: "/")
+        return cleaned.isEmpty ? defaultFolder : cleaned
+    }
 
     enum UploadError: LocalizedError {
         case missingKey
@@ -51,10 +71,15 @@ enum CDNUploader {
         try await putBytes(data, to: ticket.uploadUrl)
         try await confirm(fileKey: ticket.fileKey, key: key)
 
-        // The file key comes back without a leading slash, which is what /obj expects.
+        // A folder upload gives a key like `clips/x.mp4`. Guard the leading slash
+        // anyway, since /obj cannot resolve a key that has one.
+        let objectKey = ticket.fileKey.hasPrefix("/")
+            ? String(ticket.fileKey.dropFirst())
+            : ticket.fileKey
+
         let permalink = baseURL
             .appendingPathComponent("obj")
-            .appendingPathComponent(ticket.fileKey)
+            .appendingPathComponent(objectKey)
         Log.info("Uploaded \(filename)")
         return permalink
     }

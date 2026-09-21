@@ -61,6 +61,15 @@ HALP/CDN uploads the clip and gives you a link. It needs an API key, which goes 
 field in settings and is stored in your login keychain. Until a key is saved the option
 stays switched off.
 
+The folder field sets where uploads land, `clips` by default. Nested folders work, so
+`clips/apex` or `gameplay/2026/sep` are both fine, and the line under the field shows
+the resulting link. Slashes, spaces and dot segments get cleaned up, so pasting
+`/clips/apex/` gives the same result as typing `clips/apex`.
+
+Clips always go in a folder. An empty field falls back to `clips`, because the CDN
+stores a top level upload under a key beginning with a slash and its public route
+cannot address those, so the upload would succeed and the link would 404.
+
 When the CDN is on and the clipboard is off, the permalink goes to the clipboard
 instead of the file. Press the key, then paste a link.
 

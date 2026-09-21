@@ -106,7 +106,7 @@ struct SettingsView: View {
             }
             .padding(12)
         }
-        .frame(width: 480, height: 680)
+        .frame(width: 500, height: 720)
         .onAppear { model.refresh() }
     }
 
@@ -150,6 +150,22 @@ struct SettingsView: View {
                     Spacer()
                     Button("Remove") { model.removeKey() }
                 }
+                HStack {
+                    Text("Folder")
+                    Spacer()
+                    // labelsHidden keeps Form from drawing the placeholder as a
+                    // second label beside the row title.
+                    TextField("", text: $model.cdnFolder, prompt: Text("clips"))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 220)
+                        .onSubmit { model.commitCDNFolder() }
+                }
+                Text(model.cdnFolderHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
             } else {
                 Text("The CDN needs an API key before it can take uploads.")
                     .font(.callout)
@@ -247,6 +263,11 @@ final class SettingsModel: ObservableObject {
     }
     @Published var inputDevices: [AudioDevices.Device] = []
 
+    /// Held as text while it is being typed, then tidied when the field is left.
+    @Published var cdnFolder: String = "" {
+        didSet { apply { preferences.cdnFolder = cdnFolder } }
+    }
+
     @Published var keyInput = ""
     @Published var keyMessage: Message?
     @Published var isCheckingKey = false
@@ -297,6 +318,16 @@ final class SettingsModel: ObservableObject {
         outputDeviceUID = preferences.outputDeviceUID ?? ""
         inputDevices = AudioDevices.available()
         outputDevices = AudioOutputDevices.available()
+        // A device that is currently unplugged leaves the picker holding a tag that
+        // matches no row, which draws as a blank control. Fall back to the default so
+        // it always shows what will actually be recorded.
+        if !inputDeviceUID.isEmpty && !inputDevices.contains(where: { $0.id == inputDeviceUID }) {
+            inputDeviceUID = ""
+        }
+        if !outputDeviceUID.isEmpty && !outputDevices.contains(where: { $0.id == outputDeviceUID }) {
+            outputDeviceUID = ""
+        }
+        cdnFolder = preferences.cdnFolder
         hasAPIKey = KeychainStore.hasAPIKey
         maskedKey = KeychainStore.maskedKey
         isRecording = CaptureEngine.shared.isRunning
@@ -335,6 +366,17 @@ final class SettingsModel: ObservableObject {
         if !outputDeviceUID.isEmpty && !outputDevices.contains(where: { $0.id == outputDeviceUID }) {
             outputDeviceUID = ""
         }
+    }
+
+    /// Shows where a clip will actually end up, so the folder is not a guess.
+    var cdnFolderHint: String {
+        "Clips go to cdn.haelp.dev/obj/\(CDNUploader.sanitizeFolder(cdnFolder))/"
+    }
+
+    /// Tidies what was typed, so the field shows what is stored.
+    func commitCDNFolder() {
+        let cleaned = CDNUploader.sanitizeFolder(cdnFolder)
+        if cleaned != cdnFolder { cdnFolder = cleaned }
     }
 
     /// Names the device the empty selection will follow, so the choice is not a guess.

@@ -107,6 +107,7 @@ final class Preferences {
         static let audioSource = "audioSource"
         static let inputDeviceUID = "inputDeviceUID"
         static let outputDeviceUID = "outputDeviceUID"
+        static let cdnFolder = "cdnFolder"
     }
 
     /// Posted whenever anything below changes, so the UI and the capture engine can react.
@@ -121,7 +122,8 @@ final class Preferences {
             Key.clipDuration: 30.0,
             Key.showMenuBarItem: true,
             Key.destinations: [Destination.clipboard.rawValue],
-            Key.audioSource: AudioSource.output.rawValue
+            Key.audioSource: AudioSource.output.rawValue,
+            Key.cdnFolder: CDNUploader.defaultFolder
         ])
     }
 
@@ -235,6 +237,21 @@ final class Preferences {
         set {
             if let newValue { defaults.set(newValue, forKey: Key.outputDeviceUID) }
             else { defaults.removeObject(forKey: Key.outputDeviceUID) }
+            announce()
+        }
+    }
+
+    /// The folder on the CDN that clips are uploaded into.
+    ///
+    /// Stored in the form the API wants: no leading or trailing slash. Nested folders
+    /// like `clips/apex` are fine, and an empty value puts clips at the top level.
+    var cdnFolder: String {
+        get {
+            let stored = defaults.string(forKey: Key.cdnFolder) ?? CDNUploader.defaultFolder
+            return CDNUploader.sanitizeFolder(stored)
+        }
+        set {
+            defaults.set(CDNUploader.sanitizeFolder(newValue), forKey: Key.cdnFolder)
             announce()
         }
     }
