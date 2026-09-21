@@ -36,30 +36,36 @@ self-signed certificate and needs no Apple Developer account.
 
 ## Using it
 
-Press ⌘⇧1. The shortcut is configurable in settings.
+Recording starts off. Click the menu bar icon to start, and it turns red while
+recording. Click it again to stop. Right click for the menu: start or stop, save a clip,
+settings, quit.
 
-Open settings from the menu bar icon, or by opening ClipFarm again from Finder while it
-is already running.
+Press ⌘⇧1 to save the last stretch of what was recorded. The shortcut is configurable
+in settings.
+
+Nothing is captured while recording is off, so ClipFarm costs nothing until you switch
+it on. That also means the screen recording indicator only appears while you are
+actually recording. macOS draws that indicator and no app can hide it.
+
+Open settings by right clicking the menu bar icon, or by opening ClipFarm again from
+Finder while it is already running. ⌘W closes the window and ⌘Q quits.
 
 ### Clip length
 
 A slider and a number box, from 1 second to 5 minutes. Both show the same value.
 
 Memory use tracks the length, since ClipFarm holds compressed frames rather than raw
-ones. A minute of a 3024x1964 display runs around 45 MB.
+ones. A minute at the default resolution runs around 140 MB.
 
 ### Quality
 
-Frame rate and resolution are settings, defaulting to 30 fps at one pixel per point.
-The line under them says what that works out to on your display.
+Frame rate and resolution are settings, defaulting to 1080p at 30 fps. Resolution runs
+from your display's native size down to 360p, each option labelled with the size it
+actually records: the width follows your display's shape, so on a 3024 by 1964 panel
+the 1080p option records 1662 by 1080 rather than 1920 by 1080.
 
-These are the settings that decide how much battery ClipFarm costs, since it encodes
-continuously the whole time it is open. Recording a 3024 by 1964 Retina panel at 60 fps
-pushes four times the pixels per second that 1512 by 982 at 30 does, and on this
-machine that was the difference between about 6 per cent CPU and about 3.
-
-Retina is there if you want it for a clip you plan to crop into. Half is mostly useful
-on a large external display, where a quarter of the pixels is still a reasonable size.
+These decide how much battery ClipFarm costs while recording. On this machine native at
+60 fps ran about 6 per cent CPU and the default runs about 3. Idle costs nothing.
 
 Memory follows the same numbers, since the buffer holds encoded frames. A 30 second
 buffer at the default runs around 70 MB.
