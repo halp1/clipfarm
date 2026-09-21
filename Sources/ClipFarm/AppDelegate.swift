@@ -42,6 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
+        // Do this before anything reads the key. An item written by another process
+        // makes macOS ask for permission on every read, and rewriting it here hands
+        // ownership to ClipFarm.
+        KeychainStore.adoptExistingKeyIfNeeded()
+
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
 
         HotkeyManager.shared.start {

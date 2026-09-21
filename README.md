@@ -112,6 +112,12 @@ cent fast, which sounds like everything is slightly sharp.
 The API key lives in the login keychain under service `dev.haelp.clipfarm`. It is never
 written into the repo or the app bundle.
 
+ClipFarm reads the key once per launch and keeps it in memory, and it rewrites the
+keychain item on first run so the item belongs to the app. Both matter for how often
+macOS asks permission: a keychain item keeps the access list of whatever process
+created it, so an item added by another tool prompts on every read, and every separate
+read is its own prompt.
+
 ## Triggering it from elsewhere
 
 A Stream Deck, a shell script, or anything that can post a distributed notification:

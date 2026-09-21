@@ -25,7 +25,25 @@ enum KeychainStore {
         return query
     }
 
+    /// The key, read from the keychain once and then kept in memory.
+    ///
+    /// Every read can make macOS ask for permission, so reading on demand from the
+    /// settings window, the destination checks and the uploader meant several prompts
+    /// per launch. The value is fetched once and reused, and the cache is cleared
+    /// whenever the key is written or removed.
+    private static let cacheLock = NSLock()
+    nonisolated(unsafe) private static var cachedKey: String??
+
     static var apiKey: String? {
+        cacheLock.withLock {
+            if let cachedKey { return cachedKey }
+            let fetched = readFromKeychain()
+            cachedKey = fetched
+            return fetched
+        }
+    }
+
+    private static func readFromKeychain() -> String? {
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query(returningData: true) as CFDictionary, &item)
         guard status == errSecSuccess,
@@ -38,8 +56,14 @@ enum KeychainStore {
 
     static var hasAPIKey: Bool { apiKey != nil }
 
+    /// Drops the cached value, so the next read goes back to the keychain.
+    static func forgetCachedKey() {
+        cacheLock.withLock { cachedKey = nil }
+    }
+
     @discardableResult
     static func setAPIKey(_ key: String?) -> Bool {
+        defer { forgetCachedKey() }
         guard let key, !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             SecItemDelete(query(returningData: false) as CFDictionary)
             return true
@@ -49,17 +73,45 @@ enum KeychainStore {
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
         ]
-        let update = SecItemUpdate(
-            query(returningData: false) as CFDictionary,
-            attributes as CFDictionary
-        )
-        if update == errSecSuccess { return true }
-        if update == errSecItemNotFound {
-            var insert = query(returningData: false)
-            insert.merge(attributes) { _, new in new }
-            return SecItemAdd(insert as CFDictionary, nil) == errSecSuccess
+        // Delete and re-add rather than update. A keychain item keeps the access list
+        // of whatever process created it, and updating the value leaves that list
+        // alone. Writing it fresh from inside ClipFarm makes ClipFarm the owner, which
+        // is what stops macOS asking for permission on later launches.
+        SecItemDelete(query(returningData: false) as CFDictionary)
+        var insert = query(returningData: false)
+        insert.merge(attributes) { _, new in new }
+        return SecItemAdd(insert as CFDictionary, nil) == errSecSuccess
+    }
+
+    /// Takes ownership of a key that something else wrote.
+    ///
+    /// A key added from the command line belongs to `/usr/bin/security`, so ClipFarm
+    /// has to ask for permission every time it reads. Rewriting the item through
+    /// ClipFarm rebuilds the access list, after which reads are silent. This costs one
+    /// prompt, once.
+    ///
+    /// Stale entries pile up the same way. A signature change leaves the old app
+    /// reference behind as a broken entry that keeps prompting, and rewriting clears
+    /// those too.
+    @discardableResult
+    static func adoptExistingKeyIfNeeded() -> Bool {
+        let flag = "keychainItemAdopted"
+        guard !UserDefaults.standard.bool(forKey: flag) else { return false }
+
+        guard let existing = apiKey else {
+            // Nothing to adopt. Anything saved later is written by ClipFarm anyway.
+            UserDefaults.standard.set(true, forKey: flag)
+            return false
         }
-        return false
+
+        let rewritten = setAPIKey(existing)
+        UserDefaults.standard.set(true, forKey: flag)
+        if rewritten {
+            Log.info("Took ownership of the CDN key, so macOS stops asking for it")
+        } else {
+            Log.error("Could not take ownership of the CDN key")
+        }
+        return rewritten
     }
 
     /// Shows the first and last few characters so the settings window can confirm which
