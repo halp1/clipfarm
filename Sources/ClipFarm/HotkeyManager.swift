@@ -9,18 +9,22 @@ import Carbon.HIToolbox
 final class HotkeyManager {
     static let shared = HotkeyManager()
 
-    private var hotKeyRef: EventHotKeyRef?
+    /// One Carbon registration per shortcut, keyed by the id it was registered with.
+    private var registrations: [UInt32: EventHotKeyRef] = [:]
+    private var shortcutIDs: [UInt32: UUID] = [:]
+    private var nextID: UInt32 = 1
     private var eventHandler: EventHandlerRef?
-    private var onTrigger: (() -> Void)?
+    /// Called with the id of whichever shortcut fired.
+    private var onTrigger: ((UUID) -> Void)?
     private let signature: OSType = 0x434C_5046  // 'CLPF'
 
     private init() {}
 
-    /// Starts listening and calls `handler` on the main queue each time the key fires.
-    func start(handler: @escaping () -> Void) {
+    /// Starts listening and calls `handler` on the main queue each time a key fires.
+    func start(handler: @escaping (UUID) -> Void) {
         onTrigger = handler
         installEventHandler()
-        register(Preferences.shared.hotkey)
+        registerAll(Preferences.shared.shortcuts)
     }
 
     private func installEventHandler() {
@@ -46,7 +50,11 @@ final class HotkeyManager {
                 )
                 guard status == noErr else { return status }
                 let manager = Unmanaged<HotkeyManager>.fromOpaque(userData).takeUnretainedValue()
-                DispatchQueue.main.async { manager.onTrigger?() }
+                let carbonID = hotKeyID.id
+                DispatchQueue.main.async {
+                    guard let shortcutID = manager.shortcutIDs[carbonID] else { return }
+                    manager.onTrigger?(shortcutID)
+                }
                 return noErr
             },
             1,
@@ -56,34 +64,54 @@ final class HotkeyManager {
         )
     }
 
-    /// Swaps in a new combination. Any previous registration is dropped first.
-    func register(_ hotkey: Hotkey) {
+    /// Registers the given shortcuts, replacing whatever was registered before.
+    ///
+    /// Each one gets its own Carbon id, so the handler can tell which key fired and
+    /// therefore how long a clip to save.
+    func registerAll(_ shortcuts: [ClipShortcut]) {
         unregister()
-        var ref: EventHotKeyRef?
-        let id = EventHotKeyID(signature: signature, id: 1)
-        let status = RegisterEventHotKey(
-            hotkey.keyCode,
-            hotkey.modifiers,
-            id,
-            GetApplicationEventTarget(),
-            0,
-            &ref
-        )
-        if status == noErr {
-            hotKeyRef = ref
-            Log.info("Listening for \(hotkey.displayString)")
-        } else {
-            // Another app already owns the combination, or the modifiers are empty.
-            Log.error("Could not register \(hotkey.displayString), error \(status)")
-            NotificationCenter.default.post(name: HotkeyManager.registrationFailed, object: hotkey)
+        var failed: [ClipShortcut] = []
+
+        for shortcut in shortcuts {
+            let carbonID = nextID
+            nextID += 1
+            var ref: EventHotKeyRef?
+            let status = RegisterEventHotKey(
+                shortcut.hotkey.keyCode,
+                shortcut.hotkey.modifiers,
+                EventHotKeyID(signature: signature, id: carbonID),
+                GetApplicationEventTarget(),
+                0,
+                &ref
+            )
+            if status == noErr, let ref {
+                registrations[carbonID] = ref
+                shortcutIDs[carbonID] = shortcut.id
+            } else {
+                // Another app already owns the combination, or the modifiers are empty.
+                Log.error("Could not register \(shortcut.hotkey.displayString), error \(status)")
+                failed.append(shortcut)
+            }
+        }
+
+        if !registrations.isEmpty {
+            let keys = shortcuts.map(\.hotkey.displayString).joined(separator: ", ")
+            Log.info("Listening for \(keys)")
+        }
+        if !failed.isEmpty {
+            NotificationCenter.default.post(
+                name: HotkeyManager.registrationFailed,
+                object: failed
+            )
         }
     }
 
     func unregister() {
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-            self.hotKeyRef = nil
+        for ref in registrations.values {
+            UnregisterEventHotKey(ref)
         }
+        registrations.removeAll()
+        shortcutIDs.removeAll()
     }
 
     static let registrationFailed = Notification.Name("ClipFarmHotkeyRegistrationFailed")

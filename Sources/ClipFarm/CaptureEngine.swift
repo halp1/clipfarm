@@ -56,7 +56,9 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
     }
 
     @objc private func preferencesChanged() {
-        let duration = Preferences.shared.clipDuration
+        // Hold whatever the longest shortcut asks for, so every shortcut can trim its
+        // own length out of the same buffer.
+        let duration = Preferences.shared.longestDuration
         videoBuffer.window = duration
         audioBuffer.window = duration
         inputRecorder.setWindow(duration)

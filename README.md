@@ -40,8 +40,13 @@ Recording starts off. Click the menu bar icon to start, and it turns red while
 recording. Click it again to stop. Right click for the menu: start or stop, save a clip,
 settings, quit.
 
-Press ⌘⇧1 to save the last stretch of what was recorded. The shortcut is configurable
-in settings.
+Press ⌘⇧1 to save the last 30 seconds. Shortcuts are a list in settings, and each one
+saves its own length, so you can keep ⌘⇧1 for a quick 15 seconds and ⌘⇧2 for two
+minutes. Add as many as you want, or keep the one.
+
+ClipFarm holds whatever the longest shortcut asks for, and the shorter ones trim out of
+that same buffer. So one long shortcut sets the memory cost for all of them, and the
+line beside the list says how much is being held.
 
 Nothing is captured while recording is off, so ClipFarm costs nothing until you switch
 it on. That also means the screen recording indicator only appears while you are
@@ -50,9 +55,14 @@ actually recording. macOS draws that indicator and no app can hide it.
 Open settings by right clicking the menu bar icon, or by opening ClipFarm again from
 Finder while it is already running. ⌘W closes the window and ⌘Q quits.
 
-### Clip length
+### Shortcuts and clip length
 
-A slider and a number box, from 1 second to 5 minutes. Both show the same value.
+Each shortcut has a slider and a number box, from 1 second to 5 minutes. Add a shortcut
+with the button, remove one with the minus beside it, and record a key combination by
+clicking it and pressing the keys.
+
+A combination another app already owns cannot be registered, and settings says which
+one failed rather than leaving you to guess why nothing happens.
 
 Memory use tracks the length, since ClipFarm holds compressed frames rather than raw
 ones. A minute at the default resolution runs around 140 MB.

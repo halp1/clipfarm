@@ -49,8 +49,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
 
-        HotkeyManager.shared.start {
-            ClipCoordinator.shared.saveClip()
+        HotkeyManager.shared.start { shortcutID in
+            ClipCoordinator.shared.saveClip(shortcutID: shortcutID)
         }
 
         // A second way in, for a stream deck, a shell script, or a test run:
@@ -65,6 +65,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self,
             selector: #selector(toggleRecording),
             name: Notification.Name("dev.haelp.clipfarm.toggleRecording"),
+            object: nil
+        )
+        // Saves a particular shortcut's clip, named by its id.
+        DistributedNotificationCenter.default().addObserver(
+            self,
+            selector: #selector(saveShortcutNotification(_:)),
+            name: Notification.Name("dev.haelp.clipfarm.saveShortcut"),
             object: nil
         )
 
@@ -231,14 +238,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toggle.target = self
         menu.addItem(toggle)
 
-        let save = NSMenuItem(
-            title: "Save clip  \(Preferences.shared.hotkey.displayString)",
-            action: #selector(saveClip),
-            keyEquivalent: ""
-        )
-        save.target = self
-        save.isEnabled = recording
-        menu.addItem(save)
+        // One entry per shortcut, so the menu says what each key saves.
+        for shortcut in Preferences.shared.shortcuts {
+            let item = NSMenuItem(
+                title: "Save \(shortcut.durationLabel)  \(shortcut.hotkey.displayString)",
+                action: #selector(saveClipFromMenu(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.isEnabled = recording
+            item.representedObject = shortcut.id
+            menu.addItem(item)
+        }
 
         menu.addItem(.separator())
         let settings = NSMenuItem(
@@ -299,6 +310,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func saveClip() {
         ClipCoordinator.shared.saveClip()
+    }
+
+    @objc private func saveShortcutNotification(_ notification: Notification) {
+        guard let raw = notification.object as? String, let id = UUID(uuidString: raw) else {
+            ClipCoordinator.shared.saveClip()
+            return
+        }
+        ClipCoordinator.shared.saveClip(shortcutID: id)
+    }
+
+    @objc private func saveClipFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        ClipCoordinator.shared.saveClip(shortcutID: id)
     }
 
     @objc func openSettings() {

@@ -90,6 +90,28 @@ struct Hotkey: Codable, Equatable {
     }
 }
 
+/// A shortcut paired with the clip length it saves.
+struct ClipShortcut: Codable, Identifiable, Equatable {
+    var id: UUID
+    var hotkey: Hotkey
+    var duration: Double
+
+    init(id: UUID = UUID(), hotkey: Hotkey, duration: Double) {
+        self.id = id
+        self.hotkey = hotkey
+        self.duration = duration
+    }
+
+    /// Reads as "30s" or "2m 30s", for menus and lists.
+    var durationLabel: String {
+        let seconds = Int(duration.rounded())
+        if seconds < 60 { return "\(seconds)s" }
+        let minutes = seconds / 60
+        let remainder = seconds % 60
+        return remainder == 0 ? "\(minutes)m" : "\(minutes)m \(remainder)s"
+    }
+}
+
 /// Everything the user can change, stored in UserDefaults.
 ///
 /// The CDN key is the one exception. It lives in the keychain, see `KeychainStore`.
@@ -103,6 +125,7 @@ final class Preferences {
         static let saveFolder = "saveFolderBookmark"
         static let showMenuBarItem = "showMenuBarItem"
         static let hotkey = "hotkey"
+        static let shortcuts = "shortcuts"
         static let launchAtLogin = "launchAtLogin"
         static let audioSource = "audioSource"
         static let inputDeviceUID = "inputDeviceUID"
@@ -285,17 +308,51 @@ final class Preferences {
     /// Zero is the display's native size. The rest are the usual video heights.
     static let captureHeightChoices = [0, 2160, 1600, 1440, 1200, 1080, 900, 720, 540, 480, 360]
 
-    var hotkey: Hotkey {
+    /// Every shortcut, each with its own clip length.
+    ///
+    /// The list is what the app works from. `hotkey` and `clipDuration` are kept as a
+    /// one-shortcut view of it so older stored settings still load.
+    var shortcuts: [ClipShortcut] {
         get {
-            guard let data = defaults.data(forKey: Key.hotkey),
-                  let decoded = try? JSONDecoder().decode(Hotkey.self, from: data)
-            else { return .default }
+            guard let data = defaults.data(forKey: Key.shortcuts),
+                  let decoded = try? JSONDecoder().decode([ClipShortcut].self, from: data),
+                  !decoded.isEmpty
+            else {
+                // Nothing saved yet, so carry the old single shortcut across.
+                return [ClipShortcut(hotkey: storedHotkey, duration: clipDuration)]
+            }
             return decoded
         }
         set {
             let data = try? JSONEncoder().encode(newValue)
-            defaults.set(data, forKey: Key.hotkey)
+            defaults.set(data, forKey: Key.shortcuts)
             announce()
+        }
+    }
+
+    /// The longest length any shortcut asks for, which is how much has to be held.
+    var longestDuration: Double {
+        shortcuts.map(\.duration).max() ?? 30
+    }
+
+    private var storedHotkey: Hotkey {
+        guard let data = defaults.data(forKey: Key.hotkey),
+              let decoded = try? JSONDecoder().decode(Hotkey.self, from: data)
+        else { return .default }
+        return decoded
+    }
+
+    /// The first shortcut's key, for anything that still wants a single one.
+    var hotkey: Hotkey {
+        get { shortcuts.first?.hotkey ?? .default }
+        set {
+            var list = shortcuts
+            if list.isEmpty {
+                list = [ClipShortcut(hotkey: newValue, duration: clipDuration)]
+            } else {
+                list[0].hotkey = newValue
+            }
+            shortcuts = list
         }
     }
 }

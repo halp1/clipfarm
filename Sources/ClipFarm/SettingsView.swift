@@ -9,13 +9,21 @@ struct SettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             Form {
-                Section("Clip") {
-                    durationControls
+                Section("Shortcuts") {
+                    ForEach($model.shortcuts) { $shortcut in
+                        ShortcutRow(
+                            shortcut: $shortcut,
+                            canRemove: model.shortcuts.count > 1,
+                            onChange: { model.commitShortcuts() },
+                            onRemove: { model.removeShortcut(shortcut.id) }
+                        )
+                    }
                     HStack {
-                        Text("Shortcut")
+                        Button("Add shortcut") { model.addShortcut() }
                         Spacer()
-                        HotkeyRecorderView(hotkey: $model.hotkey)
-                            .frame(width: 130, height: 24)
+                        Text(model.bufferNote)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
                     }
                     if let warning = model.hotkeyWarning {
                         Label(warning, systemImage: "exclamationmark.triangle")
@@ -108,7 +116,7 @@ struct SettingsView: View {
 
             Divider()
             HStack {
-                Text("Clips hold the last \(model.durationLabel) of the screen.")
+                Text(model.bufferNote)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -118,36 +126,6 @@ struct SettingsView: View {
         }
         .frame(width: 500, height: 720)
         .onAppear { model.refresh() }
-    }
-
-    private var durationControls: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Length")
-                Spacer()
-                // Bound to text rather than a formatter, so typing something that is
-                // not a number leaves the stored duration alone instead of writing a
-                // stray value.
-                TextField("", text: $model.durationText)
-                    .frame(width: 60)
-                    .multilineTextAlignment(.trailing)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { model.commitDurationText() }
-                Text("sec")
-                    .foregroundStyle(.secondary)
-            }
-            Slider(
-                value: $model.duration,
-                in: Preferences.minimumDuration...Preferences.maximumDuration
-            )
-            HStack {
-                Text("1s")
-                Spacer()
-                Text("5m")
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
     }
 
     @ViewBuilder private var cdnDetail: some View {
@@ -197,6 +175,70 @@ struct SettingsView: View {
     }
 }
 
+
+/// One shortcut in the list: the key combination and the length it saves.
+struct ShortcutRow: View {
+    @Binding var shortcut: ClipShortcut
+    let canRemove: Bool
+    let onChange: () -> Void
+    let onRemove: () -> Void
+
+    /// Held as text so a half typed number does not get stored.
+    @State private var lengthText: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                HotkeyRecorderView(hotkey: $shortcut.hotkey)
+                    .frame(width: 120, height: 24)
+                    .onChange(of: shortcut.hotkey) { onChange() }
+
+                Spacer()
+
+                TextField("", text: $lengthText)
+                    .frame(width: 56)
+                    .multilineTextAlignment(.trailing)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { commitLength() }
+                Text("sec")
+                    .foregroundStyle(.secondary)
+
+                Button {
+                    onRemove()
+                } label: {
+                    Image(systemName: "minus.circle")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!canRemove)
+                .help(canRemove ? "Remove this shortcut" : "Keep at least one shortcut")
+            }
+
+            Slider(
+                value: $shortcut.duration,
+                in: Preferences.minimumDuration...Preferences.maximumDuration
+            ) { editing in
+                if !editing { onChange() }
+            }
+            .onChange(of: shortcut.duration) {
+                lengthText = String(Int(shortcut.duration.rounded()))
+            }
+        }
+        .padding(.vertical, 2)
+        .onAppear { lengthText = String(Int(shortcut.duration.rounded())) }
+    }
+
+    private func commitLength() {
+        guard let typed = Double(lengthText.trimmingCharacters(in: .whitespaces)) else {
+            lengthText = String(Int(shortcut.duration.rounded()))
+            return
+        }
+        let clamped = min(max(typed, Preferences.minimumDuration), Preferences.maximumDuration)
+        shortcut.duration = clamped
+        lengthText = String(Int(clamped.rounded()))
+        onChange()
+    }
+}
+
 @MainActor
 final class SettingsModel: ObservableObject {
     struct Message { let text: String; let isError: Bool }
@@ -204,36 +246,52 @@ final class SettingsModel: ObservableObject {
     private let preferences = Preferences.shared
     private var applying = false
 
-    @Published var duration: Double = 30 {
-        didSet {
-            apply {
-                preferences.clipDuration = duration
-                durationText = String(Int(duration.rounded()))
-            }
-        }
+    @Published var shortcuts: [ClipShortcut] = []
+
+    /// Writes the list and re-registers the keys.
+    func commitShortcuts() {
+        preferences.shortcuts = shortcuts
+        HotkeyManager.shared.registerAll(shortcuts)
+        hotkeyWarning = nil
+        objectWillChange.send()
     }
 
-    /// What the number box shows. Kept separate so a half typed value is not stored.
-    @Published var durationText: String = "30"
-
-    /// Reads the box, ignoring anything that is not a usable number.
-    func commitDurationText() {
-        guard let typed = Double(durationText.trimmingCharacters(in: .whitespaces)) else {
-            durationText = String(Int(duration.rounded()))
-            return
-        }
-        let clamped = min(max(typed, Preferences.minimumDuration), Preferences.maximumDuration)
-        duration = clamped
-        durationText = String(Int(clamped.rounded()))
+    func addShortcut() {
+        // Start from a combination that is probably free: the next digit along.
+        let used = Set(shortcuts.map(\.hotkey.keyCode))
+        let digits: [UInt32] = [18, 19, 20, 21, 23, 22, 26, 28, 25, 29]  // 1 through 0
+        let keyCode = digits.first { !used.contains($0) } ?? digits[0]
+        let previous = shortcuts.last?.duration ?? 30
+        shortcuts.append(
+            ClipShortcut(
+                hotkey: Hotkey(keyCode: keyCode, modifiers: Hotkey.default.modifiers),
+                duration: previous
+            )
+        )
+        commitShortcuts()
     }
-    @Published var hotkey: Hotkey = .default {
-        didSet {
-            apply {
-                preferences.hotkey = hotkey
-                HotkeyManager.shared.register(hotkey)
-                hotkeyWarning = nil
-            }
+
+    func removeShortcut(_ id: UUID) {
+        guard shortcuts.count > 1 else { return }
+        shortcuts.removeAll { $0.id == id }
+        commitShortcuts()
+    }
+
+    /// Says how much is being held, which is set by the longest shortcut.
+    var bufferNote: String {
+        let longest = shortcuts.map(\.duration).max() ?? 30
+        let seconds = Int(longest.rounded())
+        let label: String
+        if seconds < 60 {
+            label = "\(seconds) seconds"
+        } else {
+            let minutes = seconds / 60
+            let remainder = seconds % 60
+            label = remainder == 0
+                ? (minutes == 1 ? "minute" : "\(minutes) minutes")
+                : "\(minutes)m \(remainder)s"
         }
+        return "Holding the last \(label)."
     }
     @Published var clipboardEnabled = true {
         didSet { apply { preferences.setDestination(.clipboard, enabled: clipboardEnabled) } }
@@ -318,9 +376,13 @@ final class SettingsModel: ObservableObject {
             forName: HotkeyManager.registrationFailed,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notification in
             MainActor.assumeIsolated {
-                self?.hotkeyWarning = "Another app already uses that combination. Pick a different one."
+                let failed = notification.object as? [ClipShortcut] ?? []
+                let keys = failed.map(\.hotkey.displayString).joined(separator: ", ")
+                self?.hotkeyWarning = keys.isEmpty
+                    ? "Another app already uses that combination. Pick a different one."
+                    : "Another app already uses \(keys). Pick something else."
             }
         }
     }
@@ -335,9 +397,7 @@ final class SettingsModel: ObservableObject {
 
     func refresh() {
         applying = true
-        duration = preferences.clipDuration
-        durationText = String(Int(preferences.clipDuration.rounded()))
-        hotkey = preferences.hotkey
+        shortcuts = preferences.shortcuts
         clipboardEnabled = preferences.isSelected(.clipboard)
         folderEnabled = preferences.isSelected(.folder)
         cdnEnabled = preferences.isSelected(.cdn)
@@ -368,15 +428,6 @@ final class SettingsModel: ObservableObject {
 
     var folderLabel: String {
         preferences.saveFolder?.path ?? "No folder picked"
-    }
-
-    var durationLabel: String {
-        let seconds = Int(duration.rounded())
-        if seconds < 60 { return "\(seconds) seconds" }
-        let minutes = seconds / 60
-        let remainder = seconds % 60
-        if remainder == 0 { return minutes == 1 ? "minute" : "\(minutes) minutes" }
-        return "\(minutes)m \(remainder)s"
     }
 
     var recordingStatus: String {

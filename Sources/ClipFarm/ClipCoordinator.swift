@@ -33,16 +33,26 @@ final class ClipCoordinator {
         return directory
     }
 
-    func saveClip() {
+    /// Saves a clip of the given length, or the first shortcut's length when none is
+    /// given, which is what the menu item and the scripting hook use.
+    func saveClip(duration: Double? = nil) {
         guard !isSaving else {
             Log.info("A clip is already being saved")
             return
         }
         isSaving = true
-        Task { await performSave() }
+        let length = duration ?? Preferences.shared.shortcuts.first?.duration ?? 30
+        Task { await performSave(duration: length) }
     }
 
-    private func performSave() async {
+    /// Saves the clip belonging to a particular shortcut.
+    func saveClip(shortcutID: UUID) {
+        guard let shortcut = Preferences.shared.shortcuts.first(where: { $0.id == shortcutID })
+        else { return }
+        saveClip(duration: shortcut.duration)
+    }
+
+    private func performSave(duration: Double) async {
         defer { isSaving = false }
 
         let preferences = Preferences.shared
@@ -57,7 +67,6 @@ final class ClipCoordinator {
         }
 
         status = .saving("Cutting the clip")
-        let duration = preferences.clipDuration
         let filename = ClipExporter.makeFilename()
         let staged = stagingDirectory.appendingPathComponent(filename)
 

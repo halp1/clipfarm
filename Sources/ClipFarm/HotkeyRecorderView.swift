@@ -83,6 +83,6 @@ final class HotkeyRecorderButton: NSButton {
             NSEvent.removeMonitor(monitor)
             self.monitor = nil
         }
-        HotkeyManager.shared.register(Preferences.shared.hotkey)
+        HotkeyManager.shared.registerAll(Preferences.shared.shortcuts)
     }
 }
