@@ -26,7 +26,8 @@ enum AudioMixdown {
     /// Mixes the given sources and returns samples timed from `start`.
     ///
     /// Each source is placed on the timeline by its own timestamps, so a microphone that
-    /// started late still lines up with the picture.
+    /// started late still lines up with the picture. Where two sources overlap they are
+    /// summed, and the result is scaled down if that pushes past full scale.
     static func mix(
         sources: [[CMSampleBuffer]],
         start: CMTime,
@@ -48,31 +49,59 @@ enum AudioMixdown {
                 CMSampleBufferGetFormatDescription($0)
             }).flatMap({ AVAudioFormat(cmAudioFormatDescription: $0) }) else { continue }
 
-            let converter = AVAudioConverter(from: sourceFormat, to: format)
+            for run in contiguousRuns(source) {
+                guard let first = run.first else { continue }
+                let runStart = CMTimeSubtract(
+                    CMSampleBufferGetPresentationTimeStamp(first),
+                    start
+                ).seconds
+                guard runStart > -1 else { continue }
 
-            for sample in source {
-                let timestamp = CMSampleBufferGetPresentationTimeStamp(sample)
-                let offsetSeconds = CMTimeSubtract(timestamp, start).seconds
-                guard offsetSeconds > -1 else { continue }
-                let frameOffset = Int(offsetSeconds * sampleRate)
+                // One converter per run. A converter holds on to frames it cannot emit
+                // yet and releases them on a later call, so feeding it a run at a time
+                // and writing the output as one continuous block keeps every frame at
+                // the position it belongs. Converting sample by sample and placing each
+                // result at its own timestamp writes those held frames twice, which is
+                // audible as a short echo on anything percussive.
+                guard let converter = AVAudioConverter(from: sourceFormat, to: format) else {
+                    continue
+                }
 
-                guard let inputBuffer = pcmBuffer(from: sample, format: sourceFormat),
-                      let converted = convert(inputBuffer, using: converter, to: format),
-                      let channels = converted.floatChannelData
-                else { continue }
+                var writeIndex = Int((runStart * sampleRate).rounded())
+                for sample in run {
+                    guard let input = pcmBuffer(from: sample, format: sourceFormat),
+                          let converted = convert(input, using: converter, to: format),
+                          let channels = converted.floatChannelData
+                    else { continue }
 
-                let frames = Int(converted.frameLength)
-                for channel in 0..<Int(channelCount) {
-                    // A mono source feeds both output channels.
-                    let sourceChannel = min(channel, Int(converted.format.channelCount) - 1)
-                    let pointer = channels[sourceChannel]
-                    for frame in 0..<frames {
-                        let destination = frameOffset + frame
-                        guard destination >= 0, destination < totalFrames else { continue }
-                        mixed[channel][destination] += pointer[frame]
+                    let frames = Int(converted.frameLength)
+                    let sourceChannels = Int(converted.format.channelCount)
+                    for channel in 0..<Int(channelCount) {
+                        // A mono source feeds both output channels.
+                        let pointer = channels[min(channel, sourceChannels - 1)]
+                        for frame in 0..<frames {
+                            let destination = writeIndex + frame
+                            guard destination >= 0, destination < totalFrames else { continue }
+                            mixed[channel][destination] += pointer[frame]
+                        }
+                    }
+                    writeIndex += frames
+                    wroteAnything = true
+                }
+
+                // Whatever the converter still holds belongs at the end of this run.
+                if let tail = drain(converter, to: format), let channels = tail.floatChannelData {
+                    let frames = Int(tail.frameLength)
+                    let sourceChannels = Int(tail.format.channelCount)
+                    for channel in 0..<Int(channelCount) {
+                        let pointer = channels[min(channel, sourceChannels - 1)]
+                        for frame in 0..<frames {
+                            let destination = writeIndex + frame
+                            guard destination >= 0, destination < totalFrames else { continue }
+                            mixed[channel][destination] += pointer[frame]
+                        }
                     }
                 }
-                wroteAnything = true
             }
         }
 
@@ -94,6 +123,56 @@ enum AudioMixdown {
         }
 
         return sampleBuffers(from: mixed, format: format, start: start)
+    }
+
+    /// Splits a source into stretches of samples that run back to back.
+    ///
+    /// A gap means the device stopped sending audio for a while, usually because nothing
+    /// was playing. Each stretch is placed by its own timestamp, and within a stretch
+    /// frames simply follow one another.
+    private static func contiguousRuns(_ samples: [CMSampleBuffer]) -> [[CMSampleBuffer]] {
+        var runs: [[CMSampleBuffer]] = []
+        var current: [CMSampleBuffer] = []
+        var expectedNext: CMTime?
+
+        for sample in samples {
+            let timestamp = CMSampleBufferGetPresentationTimeStamp(sample)
+            if let expectedNext {
+                // Half a buffer of slack absorbs ordinary rounding between callbacks.
+                let drift = abs(CMTimeSubtract(timestamp, expectedNext).seconds)
+                if drift > 0.02 {
+                    runs.append(current)
+                    current = []
+                }
+            }
+            current.append(sample)
+            let frames = CMSampleBufferGetNumSamples(sample)
+            let rate = CMSampleBufferGetFormatDescription(sample)
+                .flatMap { CMAudioFormatDescriptionGetStreamBasicDescription($0)?.pointee.mSampleRate }
+                ?? sampleRate
+            expectedNext = CMTimeAdd(
+                timestamp,
+                CMTime(value: CMTimeValue(frames), timescale: CMTimeScale(rate))
+            )
+        }
+        if !current.isEmpty { runs.append(current) }
+        return runs
+    }
+
+    /// Pulls out any frames the converter is still holding.
+    private static func drain(
+        _ converter: AVAudioConverter,
+        to format: AVAudioFormat
+    ) -> AVAudioPCMBuffer? {
+        guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096) else {
+            return nil
+        }
+        var error: NSError?
+        converter.convert(to: output, error: &error) { _, status in
+            status.pointee = .endOfStream
+            return nil
+        }
+        return output.frameLength > 0 ? output : nil
     }
 
     /// Cuts the accumulated float data into sample buffers the writer can take.

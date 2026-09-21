@@ -67,7 +67,7 @@ final class ClipCoordinator {
             clipURL = try await ClipExporter.export(
                 duration: duration,
                 videoBuffer: CaptureEngine.shared.videoBuffer,
-                systemAudio: source.needsSystemAudio ? CaptureEngine.shared.audioBuffer : nil,
+                outputAudio: source.needsOutputDevice ? CaptureEngine.shared.audioBuffer : nil,
                 inputAudio: source.needsInputDevice ? CaptureEngine.shared.inputRecorder.buffer : nil,
                 to: staged
             )

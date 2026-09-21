@@ -30,9 +30,20 @@ struct SettingsView: View {
                             Text(source.title).tag(source)
                         }
                     }
+                    if model.audioSource.needsOutputDevice {
+                        Picker("Output", selection: $model.outputDeviceUID) {
+                            Text(model.defaultOutputLabel).tag("")
+                            ForEach(model.outputDevices) { device in
+                                Text(device.name).tag(device.id)
+                            }
+                        }
+                        Text("Records the sound going to this device, whatever is playing through it.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                     if model.audioSource.needsInputDevice {
                         Picker("Input", selection: $model.inputDeviceUID) {
-                            Text("System default").tag("")
+                            Text("Current default").tag("")
                             ForEach(model.inputDevices) { device in
                                 Text(device.name).tag(device.id)
                             }
@@ -42,6 +53,8 @@ struct SettingsView: View {
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                         }
+                    }
+                    if model.audioSource != .none {
                         Button("Rescan devices") { model.reloadDevices() }
                     }
                 }
@@ -211,14 +224,21 @@ final class SettingsModel: ObservableObject {
         }
     }
 
-    @Published var audioSource: AudioSource = .system {
+    @Published var audioSource: AudioSource = .output {
         didSet {
             apply {
                 preferences.audioSource = audioSource
-                if audioSource.needsInputDevice { reloadDevices() }
+                if audioSource != .none { reloadDevices() }
             }
         }
     }
+    /// The chosen output device UID. An empty string follows the system default.
+    @Published var outputDeviceUID: String = "" {
+        didSet {
+            apply { preferences.outputDeviceUID = outputDeviceUID.isEmpty ? nil : outputDeviceUID }
+        }
+    }
+    @Published var outputDevices: [AudioOutputDevices.Device] = []
     /// The chosen input device UID. An empty string means the system default.
     @Published var inputDeviceUID: String = "" {
         didSet {
@@ -274,7 +294,9 @@ final class SettingsModel: ObservableObject {
         launchAtLogin = LoginItem.isEnabled
         audioSource = preferences.audioSource
         inputDeviceUID = preferences.inputDeviceUID ?? ""
+        outputDeviceUID = preferences.outputDeviceUID ?? ""
         inputDevices = AudioDevices.available()
+        outputDevices = AudioOutputDevices.available()
         hasAPIKey = KeychainStore.hasAPIKey
         maskedKey = KeychainStore.maskedKey
         isRecording = CaptureEngine.shared.isRunning
@@ -305,10 +327,22 @@ final class SettingsModel: ObservableObject {
     /// Picks up a device that was plugged in after the window opened.
     func reloadDevices() {
         inputDevices = AudioDevices.available()
-        // A device that went away falls back to the system default.
+        outputDevices = AudioOutputDevices.available()
+        // A device that went away falls back to the current default.
         if !inputDeviceUID.isEmpty && !inputDevices.contains(where: { $0.id == inputDeviceUID }) {
             inputDeviceUID = ""
         }
+        if !outputDeviceUID.isEmpty && !outputDevices.contains(where: { $0.id == outputDeviceUID }) {
+            outputDeviceUID = ""
+        }
+    }
+
+    /// Names the device the empty selection will follow, so the choice is not a guess.
+    var defaultOutputLabel: String {
+        if let name = AudioOutputDevices.defaultOutputDeviceName() {
+            return "Current default (\(name))"
+        }
+        return "Current default"
     }
 
     func chooseFolder() {

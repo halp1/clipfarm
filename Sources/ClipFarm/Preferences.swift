@@ -106,6 +106,7 @@ final class Preferences {
         static let launchAtLogin = "launchAtLogin"
         static let audioSource = "audioSource"
         static let inputDeviceUID = "inputDeviceUID"
+        static let outputDeviceUID = "outputDeviceUID"
     }
 
     /// Posted whenever anything below changes, so the UI and the capture engine can react.
@@ -120,7 +121,7 @@ final class Preferences {
             Key.clipDuration: 30.0,
             Key.showMenuBarItem: true,
             Key.destinations: [Destination.clipboard.rawValue],
-            Key.audioSource: AudioSource.system.rawValue
+            Key.audioSource: AudioSource.output.rawValue
         ])
     }
 
@@ -210,7 +211,7 @@ final class Preferences {
         get {
             guard let raw = defaults.string(forKey: Key.audioSource),
                   let source = AudioSource(rawValue: raw)
-            else { return .system }
+            else { return .output }
             return source
         }
         set { defaults.set(newValue.rawValue, forKey: Key.audioSource); announce() }
@@ -223,6 +224,17 @@ final class Preferences {
         set {
             if let newValue { defaults.set(newValue, forKey: Key.inputDeviceUID) }
             else { defaults.removeObject(forKey: Key.inputDeviceUID) }
+            announce()
+        }
+    }
+
+    /// The output device whose sound gets recorded, held by its Core Audio UID.
+    /// Empty means whatever macOS currently plays through.
+    var outputDeviceUID: String? {
+        get { defaults.string(forKey: Key.outputDeviceUID) }
+        set {
+            if let newValue { defaults.set(newValue, forKey: Key.outputDeviceUID) }
+            else { defaults.removeObject(forKey: Key.outputDeviceUID) }
             announce()
         }
     }

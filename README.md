@@ -66,13 +66,22 @@ instead of the file. Press the key, then paste a link.
 
 ### Audio
 
-Four choices. System audio records what the machine plays, which covers game sound and
-voice chat. Input device records one microphone or interface. Both sums them into a
-single track, adjusted down if they would clip. No audio makes a silent clip.
+Four choices. Output device records the sound going to one specific set of speakers or
+headphones, which covers game sound and voice chat. Input device records one microphone
+or interface. Both sums them into a single track, adjusted down if they would clip. No
+audio makes a silent clip.
 
-The input list refreshes when you open it, and there is a rescan button for a device
+Picking the output device by name matters when you have several. Recording "whatever is
+the system default" is wrong as soon as you have a virtual device like BlackHole
+installed, since the default may be something you never actually listen to. Leave the
+choice on the default and ClipFarm follows it, or name a device and it stays there.
+
+Both lists refresh when you open them, and there is a rescan button for a device
 plugged in while the window was already open. A device that disappears falls back to
-whatever macOS has set as the default input.
+the current default.
+
+macOS asks for microphone permission the first time, even for recording an output
+device. A tap can hear anything the machine plays, so it is gated the same way.
 
 ## How it works
 
@@ -84,6 +93,12 @@ time, samples splice together without a seam.
 Keyframes are forced once a second, so a trim never has to reach far back to find one.
 When you press the key, AVAssetWriter writes the trailing samples with the video passed
 through as it is. Only the audio is encoded at save time.
+
+Audio comes from a Core Audio process tap bound to the chosen device's output stream,
+wrapped in a private aggregate device. The tap reports a sample rate that does not
+always match what the device runs at, so ClipFarm timestamps the samples using the
+device's own rate. Using the tap's figure makes a 44.1 kHz device play back about 9 per
+cent fast, which sounds like everything is slightly sharp.
 
 The API key lives in the login keychain under service `dev.haelp.clipfarm`. It is never
 written into the repo or the app bundle.
@@ -111,4 +126,4 @@ Debug builds launched from `.build` cannot register the open at login setting, s
 
 ## Requirements
 
-macOS 14 or later.
+macOS 14.2 or later, which is when Core Audio gained the tap API.

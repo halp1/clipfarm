@@ -29,8 +29,11 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
     private let audioQueue = DispatchQueue(label: "dev.haelp.clipfarm.audio")
 
     let videoBuffer = ClipBuffer()
-    /// What the machine plays, captured by ScreenCaptureKit.
+    /// The sound going out of the chosen output device.
     let audioBuffer = ClipBuffer(kind: .audio)
+    private lazy var outputTap = AudioOutputTap { [weak self] sample in
+        self?.audioBuffer.append(sample)
+    }
     /// A microphone or interface, captured separately.
     let inputRecorder = InputAudioRecorder()
 
@@ -62,6 +65,20 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
         // screen capture, since the microphone runs on its own session.
         guard isRunning else { return }
         let preferences = Preferences.shared
+
+        let wantedOutput = preferences.outputDeviceUID
+        if preferences.audioSource.needsOutputDevice {
+            if !outputTap.isRunning || wantedOutput != activeOutputDeviceUID {
+                activeOutputDeviceUID = wantedOutput
+                audioBuffer.removeAll()
+                outputTap.start(deviceUID: wantedOutput)
+            }
+        } else if outputTap.isRunning {
+            outputTap.stop()
+            audioBuffer.removeAll()
+            activeOutputDeviceUID = nil
+        }
+
         let wantedDevice = preferences.inputDeviceUID
         if preferences.audioSource.needsInputDevice {
             if !inputRecorder.isRunning || wantedDevice != activeInputDeviceUID {
@@ -78,6 +95,7 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
     /// The device the input recorder is currently on, so a preference change can tell
     /// whether it actually needs to switch.
     private var activeInputDeviceUID: String?
+    private var activeOutputDeviceUID: String?
 
 
     /// Asks for screen recording permission, which macOS shows as a prompt the first time.
@@ -115,7 +133,9 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
             config.queueDepth = 8
             config.pixelFormat = kCVPixelFormatType_32BGRA
             config.showsCursor = true
-            config.capturesAudio = Preferences.shared.audioSource.needsSystemAudio
+            // Audio comes from a Core Audio tap rather than from here, so a specific
+            // output device can be recorded instead of the system mix.
+            config.capturesAudio = false
             config.sampleRate = 48000
             config.channelCount = 2
 
@@ -141,6 +161,20 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
 
             self.stream = stream
             isRunning = true
+
+            // A tap can hear anything the machine plays, so macOS gates it behind the
+            // microphone permission just like a real input device.
+            let source = Preferences.shared.audioSource
+            if source.needsOutputDevice || source.needsInputDevice {
+                if await AudioDevices.requestPermission() {
+                    if source.needsOutputDevice {
+                        activeOutputDeviceUID = Preferences.shared.outputDeviceUID
+                        outputTap.start(deviceUID: activeOutputDeviceUID)
+                    }
+                } else {
+                    Log.error("Microphone permission was declined, so clips will be silent")
+                }
+            }
 
             // Start the microphone when the chosen source asks for one.
             if Preferences.shared.audioSource.needsInputDevice {
@@ -173,7 +207,9 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
         isRunning = false
         tearDownEncoder()
         inputRecorder.stop()
+        outputTap.stop()
         activeInputDeviceUID = nil
+        activeOutputDeviceUID = nil
         videoBuffer.removeAll()
         audioBuffer.removeAll()
         NotificationCenter.default.post(name: CaptureEngine.stateChanged, object: nil)

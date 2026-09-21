@@ -19,7 +19,7 @@
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>14.0</string>
+	<string>14.2</string>
 	<!-- Keeps ClipFarm out of the Dock and the app switcher. -->
 	<key>LSUIElement</key>
 	<true/>
@@ -31,6 +31,10 @@
 	<false/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>ClipFarm records your microphone into clips when you pick an input device.</string>
+	<!-- Recording an output device's sound is a separate permission from the
+	     microphone, and Core Audio refuses the tap without this key. -->
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>ClipFarm records the sound your chosen output device is playing, so your clips have game audio.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>halp</string>
 </dict>

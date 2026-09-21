@@ -27,12 +27,12 @@ enum ClipExporter {
 
     /// Builds a clip of the last `duration` seconds and returns where it was written.
     ///
-    /// `systemAudio` holds what the machine played and `inputAudio` holds the microphone.
-    /// Whichever are present get summed into one track.
+    /// `outputAudio` holds what the chosen output device played and `inputAudio` holds
+    /// the microphone. Whichever are present get summed into one track.
     static func export(
         duration: Double,
         videoBuffer: ClipBuffer,
-        systemAudio: ClipBuffer?,
+        outputAudio: ClipBuffer?,
         inputAudio: ClipBuffer?,
         to url: URL
     ) async throws -> URL {
@@ -64,8 +64,8 @@ enum ClipExporter {
             startTime
         ).seconds
         var sources: [[CMSampleBuffer]] = []
-        if let systemAudio {
-            let samples = systemAudio.samples(from: startTime)
+        if let outputAudio {
+            let samples = outputAudio.samples(from: startTime)
             if !samples.isEmpty { sources.append(samples) }
         }
         if let inputAudio {

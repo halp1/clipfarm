@@ -3,8 +3,8 @@ import Foundation
 
 /// Which sound goes into a clip.
 enum AudioSource: String, CaseIterable, Codable {
-    /// What the machine plays: the game, voice chat, music.
-    case system
+    /// The sound going out of one output device: the game, voice chat, music.
+    case output
     /// One input device, usually a microphone or an interface.
     case input
     /// Both, summed into a single track.
@@ -14,15 +14,15 @@ enum AudioSource: String, CaseIterable, Codable {
 
     var title: String {
         switch self {
-        case .system: return "System audio"
+        case .output: return "Output device"
         case .input: return "Input device"
-        case .both: return "System audio and input"
+        case .both: return "Output and input"
         case .none: return "No audio"
         }
     }
 
     var needsInputDevice: Bool { self == .input || self == .both }
-    var needsSystemAudio: Bool { self == .system || self == .both }
+    var needsOutputDevice: Bool { self == .output || self == .both }
 }
 
 /// Lists the input devices the user can record from.
