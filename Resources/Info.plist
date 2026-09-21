@@ -29,6 +29,8 @@
 	<false/>
 	<key>NSSupportsSuddenTermination</key>
 	<false/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>ClipFarm records your microphone into clips when you pick an input device.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>halp</string>
 </dict>

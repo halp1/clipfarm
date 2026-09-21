@@ -63,10 +63,12 @@ final class ClipCoordinator {
 
         let clipURL: URL
         do {
+            let source = preferences.audioSource
             clipURL = try await ClipExporter.export(
                 duration: duration,
                 videoBuffer: CaptureEngine.shared.videoBuffer,
-                audioBuffer: CaptureEngine.shared.audioBuffer,
+                systemAudio: source.needsSystemAudio ? CaptureEngine.shared.audioBuffer : nil,
+                inputAudio: source.needsInputDevice ? CaptureEngine.shared.inputRecorder.buffer : nil,
                 to: staged
             )
         } catch {

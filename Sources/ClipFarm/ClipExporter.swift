@@ -26,10 +26,14 @@ enum ClipExporter {
     }
 
     /// Builds a clip of the last `duration` seconds and returns where it was written.
+    ///
+    /// `systemAudio` holds what the machine played and `inputAudio` holds the microphone.
+    /// Whichever are present get summed into one track.
     static func export(
         duration: Double,
         videoBuffer: ClipBuffer,
-        audioBuffer: ClipBuffer,
+        systemAudio: ClipBuffer?,
+        inputAudio: ClipBuffer?,
         to url: URL
     ) async throws -> URL {
         guard let (videoSamples, startTime) = videoBuffer.trailing(duration),
@@ -54,16 +58,31 @@ enum ClipExporter {
         }
         writer.add(videoInput)
 
-        let audioSamples = audioBuffer.samples(from: startTime)
+        // Collect whichever audio sources were recorded and sum them into one track.
+        let clipLength = CMTimeSubtract(
+            CMSampleBufferGetPresentationTimeStamp(videoSamples.last!),
+            startTime
+        ).seconds
+        var sources: [[CMSampleBuffer]] = []
+        if let systemAudio {
+            let samples = systemAudio.samples(from: startTime)
+            if !samples.isEmpty { sources.append(samples) }
+        }
+        if let inputAudio {
+            let samples = inputAudio.samples(from: startTime)
+            if !samples.isEmpty { sources.append(samples) }
+        }
+
+        let audioSamples = sources.isEmpty
+            ? []
+            : AudioMixdown.mix(sources: sources, start: startTime, duration: max(clipLength, duration))
+
         var audioInput: AVAssetWriterInput?
-        if let audioFormat = audioBuffer.formatDescription, !audioSamples.isEmpty {
-            let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(audioFormat)
-            let channels = Int(streamDescription?.pointee.mChannelsPerFrame ?? 2)
-            let sampleRate = streamDescription?.pointee.mSampleRate ?? 48000
+        if !audioSamples.isEmpty {
             let settings: [String: Any] = [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVNumberOfChannelsKey: channels,
-                AVSampleRateKey: sampleRate,
+                AVNumberOfChannelsKey: Int(AudioMixdown.channelCount),
+                AVSampleRateKey: AudioMixdown.sampleRate,
                 AVEncoderBitRateKey: 192_000
             ]
             let input = AVAssetWriterInput(mediaType: .audio, outputSettings: settings)

@@ -18,7 +18,10 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
     private let audioQueue = DispatchQueue(label: "dev.haelp.clipfarm.audio")
 
     let videoBuffer = ClipBuffer()
+    /// What the machine plays, captured by ScreenCaptureKit.
     let audioBuffer = ClipBuffer()
+    /// A microphone or interface, captured separately.
+    let inputRecorder = InputAudioRecorder()
 
     private(set) var isRunning = false
     private var frameRate: Int32 = 60
@@ -42,7 +45,28 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
         let duration = Preferences.shared.clipDuration
         videoBuffer.window = duration
         audioBuffer.window = duration
+        inputRecorder.setWindow(duration)
+
+        // A change of audio device or source takes effect without restarting the
+        // screen capture, since the microphone runs on its own session.
+        guard isRunning else { return }
+        let preferences = Preferences.shared
+        let wantedDevice = preferences.inputDeviceUID
+        if preferences.audioSource.needsInputDevice {
+            if !inputRecorder.isRunning || wantedDevice != activeInputDeviceUID {
+                activeInputDeviceUID = wantedDevice
+                inputRecorder.start(deviceUID: wantedDevice)
+                inputRecorder.setWindow(duration)
+            }
+        } else if inputRecorder.isRunning {
+            inputRecorder.stop()
+            activeInputDeviceUID = nil
+        }
     }
+
+    /// The device the input recorder is currently on, so a preference change can tell
+    /// whether it actually needs to switch.
+    private var activeInputDeviceUID: String?
 
     /// Asks for screen recording permission, which macOS shows as a prompt the first time.
     func requestPermission() async -> Bool {
@@ -76,7 +100,7 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
             config.queueDepth = 8
             config.pixelFormat = kCVPixelFormatType_32BGRA
             config.showsCursor = true
-            config.capturesAudio = true
+            config.capturesAudio = Preferences.shared.audioSource.needsSystemAudio
             config.sampleRate = 48000
             config.channelCount = 2
 
@@ -90,6 +114,16 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
 
             self.stream = stream
             isRunning = true
+
+            // Start the microphone when the chosen source asks for one.
+            if Preferences.shared.audioSource.needsInputDevice {
+                if await AudioDevices.requestPermission() {
+                    activeInputDeviceUID = Preferences.shared.inputDeviceUID
+                    inputRecorder.start(deviceUID: activeInputDeviceUID)
+                } else {
+                    Log.error("Microphone permission was declined, recording the screen without it")
+                }
+            }
             preferencesChanged()
             Log.info("Recording \(config.width)x\(config.height) at \(frameRate) fps")
             NotificationCenter.default.post(name: CaptureEngine.stateChanged, object: nil)
@@ -106,6 +140,8 @@ final class CaptureEngine: NSObject, @unchecked Sendable {
         self.stream = nil
         isRunning = false
         tearDownEncoder()
+        inputRecorder.stop()
+        activeInputDeviceUID = nil
         videoBuffer.removeAll()
         audioBuffer.removeAll()
         NotificationCenter.default.post(name: CaptureEngine.stateChanged, object: nil)

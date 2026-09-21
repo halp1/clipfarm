@@ -24,6 +24,28 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("Audio") {
+                    Picker("Record", selection: $model.audioSource) {
+                        ForEach(AudioSource.allCases, id: \.self) { source in
+                            Text(source.title).tag(source)
+                        }
+                    }
+                    if model.audioSource.needsInputDevice {
+                        Picker("Input", selection: $model.inputDeviceUID) {
+                            Text("System default").tag("")
+                            ForEach(model.inputDevices) { device in
+                                Text(device.name).tag(device.id)
+                            }
+                        }
+                        if model.inputDevices.isEmpty {
+                            Text("No input devices are plugged in.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        Button("Rescan devices") { model.reloadDevices() }
+                    }
+                }
+
                 Section("Save to") {
                     Toggle("Clipboard", isOn: $model.clipboardEnabled)
                     Toggle("Folder", isOn: $model.folderEnabled)
@@ -188,6 +210,22 @@ final class SettingsModel: ObservableObject {
         }
     }
 
+    @Published var audioSource: AudioSource = .system {
+        didSet {
+            apply {
+                preferences.audioSource = audioSource
+                if audioSource.needsInputDevice { reloadDevices() }
+            }
+        }
+    }
+    /// The chosen input device UID. An empty string means the system default.
+    @Published var inputDeviceUID: String = "" {
+        didSet {
+            apply { preferences.inputDeviceUID = inputDeviceUID.isEmpty ? nil : inputDeviceUID }
+        }
+    }
+    @Published var inputDevices: [AudioDevices.Device] = []
+
     @Published var keyInput = ""
     @Published var keyMessage: Message?
     @Published var isCheckingKey = false
@@ -233,6 +271,9 @@ final class SettingsModel: ObservableObject {
         cdnEnabled = preferences.isSelected(.cdn)
         showMenuBarItem = preferences.showMenuBarItem
         launchAtLogin = LoginItem.isEnabled
+        audioSource = preferences.audioSource
+        inputDeviceUID = preferences.inputDeviceUID ?? ""
+        inputDevices = AudioDevices.available()
         hasAPIKey = KeychainStore.hasAPIKey
         maskedKey = KeychainStore.maskedKey
         isRecording = CaptureEngine.shared.isRunning
@@ -258,6 +299,15 @@ final class SettingsModel: ObservableObject {
 
     func startRecording() {
         Task { await CaptureEngine.shared.start() }
+    }
+
+    /// Picks up a device that was plugged in after the window opened.
+    func reloadDevices() {
+        inputDevices = AudioDevices.available()
+        // A device that went away falls back to the system default.
+        if !inputDeviceUID.isEmpty && !inputDevices.contains(where: { $0.id == inputDeviceUID }) {
+            inputDeviceUID = ""
+        }
     }
 
     func chooseFolder() {

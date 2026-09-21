@@ -104,6 +104,8 @@ final class Preferences {
         static let showMenuBarItem = "showMenuBarItem"
         static let hotkey = "hotkey"
         static let launchAtLogin = "launchAtLogin"
+        static let audioSource = "audioSource"
+        static let inputDeviceUID = "inputDeviceUID"
     }
 
     /// Posted whenever anything below changes, so the UI and the capture engine can react.
@@ -117,7 +119,8 @@ final class Preferences {
         defaults.register(defaults: [
             Key.clipDuration: 30.0,
             Key.showMenuBarItem: true,
-            Key.destinations: [Destination.clipboard.rawValue]
+            Key.destinations: [Destination.clipboard.rawValue],
+            Key.audioSource: AudioSource.system.rawValue
         ])
     }
 
@@ -200,6 +203,28 @@ final class Preferences {
     var showMenuBarItem: Bool {
         get { defaults.bool(forKey: Key.showMenuBarItem) }
         set { defaults.set(newValue, forKey: Key.showMenuBarItem); announce() }
+    }
+
+    /// Which sound gets recorded into a clip.
+    var audioSource: AudioSource {
+        get {
+            guard let raw = defaults.string(forKey: Key.audioSource),
+                  let source = AudioSource(rawValue: raw)
+            else { return .system }
+            return source
+        }
+        set { defaults.set(newValue.rawValue, forKey: Key.audioSource); announce() }
+    }
+
+    /// The input device to record, held by its unique ID so it survives a reconnect.
+    /// Empty means whatever macOS has set as the default input.
+    var inputDeviceUID: String? {
+        get { defaults.string(forKey: Key.inputDeviceUID) }
+        set {
+            if let newValue { defaults.set(newValue, forKey: Key.inputDeviceUID) }
+            else { defaults.removeObject(forKey: Key.inputDeviceUID) }
+            announce()
+        }
     }
 
     var hotkey: Hotkey {
