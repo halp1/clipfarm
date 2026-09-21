@@ -265,13 +265,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if case .saving = ClipCoordinator.shared.status { saving = true } else { saving = false }
 
         let symbol = saving ? "scissors.circle.fill" : "scissors"
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "ClipFarm")
+        var image = NSImage(systemSymbolName: symbol, accessibilityDescription: "ClipFarm")
 
-        // Red while recording, so the state is readable at a glance. A template image
-        // takes the menu bar's own colour, so that has to be off to tint it.
-        image?.isTemplate = !recording
+        // Red while recording, so the state is readable at a glance.
+        //
+        // The colour comes from a palette symbol configuration rather than from
+        // contentTintColor. A tint only applies to a template image, and a template
+        // image is recoloured by the menu bar itself, so the two settings cancel out
+        // and the icon stays black either way. Baking the colour into the image is the
+        // part that actually works.
+        if recording {
+            let red = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
+            image = image?.withSymbolConfiguration(red)
+            image?.isTemplate = false
+        } else {
+            image?.isTemplate = true
+        }
         button.image = image
-        button.contentTintColor = recording ? .systemRed : nil
+        button.contentTintColor = nil
 
         button.toolTip = recording
             ? "Recording. Click to stop, right click for more."

@@ -50,9 +50,6 @@ struct SettingsView: View {
                                 Text(device.name).tag(device.id)
                             }
                         }
-                        Text("Records the sound going to this device, whatever is playing through it.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
                     }
                     if model.audioSource.needsInputDevice {
                         Picker("Input", selection: $model.inputDeviceUID) {
